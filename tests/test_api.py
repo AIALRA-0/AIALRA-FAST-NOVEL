@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import sys
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
@@ -115,6 +117,7 @@ def test_large_demo_exercises_graph_timeline_and_journey(tmp_path: Path) -> None
         assert overview["quality"]["evidence_coverage_percent"] == 100.0
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="本机凭据存储使用 Windows DPAPI")
 def test_provider_key_is_encrypted_and_never_echoed(tmp_path: Path, monkeypatch) -> None:
     """保存接口只返回配置状态，凭据文件中不出现明文。"""
 
@@ -131,6 +134,23 @@ def test_provider_key_is_encrypted_and_never_echoed(tmp_path: Path, monkeypatch)
         assert placeholder not in secret_path.read_text(encoding="utf-8")
         removed = client.delete("/api/settings/provider-key/deepseek")
         assert removed.status_code == 204
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows 由 DPAPI 加密路径覆盖")
+def test_provider_key_storage_fails_closed_without_os_encryption(tmp_path: Path, monkeypatch) -> None:
+    """非 Windows 服务器不得把模型密钥降级为明文保存。"""
+
+    secret_path = tmp_path / "credentials.json"
+    monkeypatch.setenv("NOVEL_SECRET_PATH", str(secret_path))
+    placeholder = "test-provider-secret-123456"
+    with client_for(tmp_path) as client:
+        response = client.post(
+            "/api/settings/provider-key",
+            json={"provider": "deepseek", "api_key": placeholder},
+        )
+        assert response.status_code == 422
+        assert placeholder not in response.text
+        assert not secret_path.exists()
 
 
 def test_kimi_code_key_is_rejected_for_moonshot_batch_api(tmp_path: Path) -> None:
