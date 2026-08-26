@@ -1,0 +1,47 @@
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${NOVEL_ATLAS_HOST};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type text/plain;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${NOVEL_ATLAS_HOST};
+
+    ssl_certificate /etc/letsencrypt/live/${NOVEL_ATLAS_HOST}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${NOVEL_ATLAS_HOST}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    include /srv/aialra/config/nginx/snippets/aialra-auth-endpoints.conf;
+    include /srv/aialra/config/nginx/snippets/aialra-auth-protect.conf;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Permissions-Policy "camera=(), geolocation=(), microphone=()" always;
+    add_header Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+
+    client_max_body_size 30m;
+
+    location / {
+        include /srv/aialra/config/nginx/snippets/aialra-auth-identity-headers.conf;
+        proxy_pass http://127.0.0.1:${NOVEL_ATLAS_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

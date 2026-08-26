@@ -1,0 +1,1152 @@
+"""SQLite 数据层与证据优先的规范化表结构。"""
+
+from __future__ import annotations
+
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+
+SCHEMA = """
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS library_folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id INTEGER REFERENCES library_folders(id) ON DELETE RESTRICT,
+    name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(parent_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS books (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT '',
+    source_type TEXT NOT NULL,
+    source_hash TEXT NOT NULL UNIQUE,
+    original_filename TEXT NOT NULL,
+    folder_id INTEGER REFERENCES library_folders(id) ON DELETE SET NULL,
+    segment_count INTEGER NOT NULL DEFAULT 0,
+    character_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    chapter_title TEXT NOT NULL,
+    anchor TEXT NOT NULL,
+    text TEXT NOT NULL,
+    char_start INTEGER NOT NULL,
+    char_end INTEGER NOT NULL,
+    UNIQUE(book_id, ordinal),
+    UNIQUE(book_id, anchor)
+);
+
+CREATE TABLE IF NOT EXISTS book_update_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    proposed_title TEXT NOT NULL,
+    proposed_author TEXT NOT NULL DEFAULT '',
+    previous_segment_count INTEGER NOT NULL,
+    added_segment_count INTEGER NOT NULL DEFAULT 0,
+    common_prefix_count INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'previewed',
+    conflicts_json TEXT NOT NULL DEFAULT '[]',
+    payload_json TEXT NOT NULL,
+    resolution TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    applied_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS maintenance_runs (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    repair_key TEXT NOT NULL,
+    result_json TEXT NOT NULL DEFAULT '{}',
+    completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(book_id, repair_key)
+);
+
+CREATE TABLE IF NOT EXISTS entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    name TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    importance REAL NOT NULL DEFAULT 0.5,
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    x REAL,
+    y REAL,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, kind, name)
+);
+
+CREATE TABLE IF NOT EXISTS aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    alias TEXT NOT NULL,
+    UNIQUE(entity_id, alias)
+);
+
+CREATE TABLE IF NOT EXISTS claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    source_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    target_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
+    predicate TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unreviewed',
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, source_entity_id, target_entity_id, predicate, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS place_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    source_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    target_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    relative_position TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, source_entity_id, target_entity_id, relative_position, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    narrative_order INTEGER NOT NULL,
+    story_order REAL NOT NULL,
+    temporal_kind TEXT NOT NULL,
+    temporal_value TEXT NOT NULL DEFAULT '',
+    temporal_start TEXT,
+    temporal_end TEXT,
+    confidence REAL NOT NULL,
+    location_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    transport TEXT NOT NULL DEFAULT '',
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, title, narrative_order, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS event_participants (
+    event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    PRIMARY KEY(event_id, entity_id, role)
+);
+
+CREATE TABLE IF NOT EXISTS world_notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    archived_at TEXT,
+    UNIQUE(book_id, category, title, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    name TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    attributes_json TEXT NOT NULL DEFAULT '{}',
+    confidence REAL NOT NULL,
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, category, name, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    segment_id INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    quote TEXT NOT NULL,
+    quote_start INTEGER NOT NULL,
+    quote_end INTEGER NOT NULL,
+    run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL,
+    model_call_id INTEGER REFERENCES model_call_ledger(id) ON DELETE SET NULL,
+    UNIQUE(target_type, target_id, segment_id, quote_start, quote_end)
+);
+
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL,
+    start_segment INTEGER NOT NULL DEFAULT 0,
+    segments_requested INTEGER NOT NULL,
+    segments_succeeded INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    field_name TEXT NOT NULL,
+    old_value TEXT NOT NULL,
+    new_value TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS entity_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, kind, normalized_name)
+);
+
+CREATE TABLE IF NOT EXISTS entity_merges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    kept_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    removed_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS entity_merge_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    left_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    right_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    reason TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    status TEXT NOT NULL DEFAULT 'unreviewed',
+    resolution_reason TEXT NOT NULL DEFAULT '',
+    resolved_by TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, left_entity_id, right_entity_id, reason)
+);
+
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    start_segment INTEGER NOT NULL DEFAULT 0,
+    end_segment INTEGER NOT NULL,
+    total_segments INTEGER NOT NULL DEFAULT 0,
+    completed_segments INTEGER NOT NULL DEFAULT 0,
+    failed_segments INTEGER NOT NULL DEFAULT 0,
+    accepted_facts INTEGER NOT NULL DEFAULT 0,
+    rejected_facts INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_usd_per_million REAL,
+    cache_miss_input_usd_per_million REAL,
+    output_usd_per_million REAL,
+    estimated_cost_usd REAL,
+    pricing_source TEXT NOT NULL DEFAULT '',
+    pricing_effective_date TEXT NOT NULL DEFAULT '',
+    max_retries INTEGER NOT NULL DEFAULT 3,
+    prompt_version TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS analysis_job_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+    segment_id INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    accepted_facts INTEGER NOT NULL DEFAULT 0,
+    rejected_facts INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(job_id, segment_id)
+);
+
+CREATE TABLE IF NOT EXISTS analysis_job_review_usage (
+    job_id INTEGER PRIMARY KEY REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+    batches INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS analysis_job_quality_usage (
+    job_id INTEGER PRIMARY KEY REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+    calls INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS segment_results (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    segment_id INTEGER NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0,
+    job_id INTEGER REFERENCES analysis_jobs(id) ON DELETE SET NULL,
+    run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL,
+    model_call_id INTEGER REFERENCES model_call_ledger(id) ON DELETE SET NULL,
+    completed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, segment_id, provider, model, prompt_version)
+);
+
+CREATE TABLE IF NOT EXISTS book_memory (
+    book_id INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+    through_segment INTEGER NOT NULL DEFAULT -1,
+    summary TEXT NOT NULL DEFAULT '',
+    open_threads_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS event_order_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    earlier_event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    later_event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    status TEXT NOT NULL DEFAULT 'accepted',
+    reason TEXT NOT NULL DEFAULT '',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    resolution_reason TEXT NOT NULL DEFAULT '',
+    resolved_by TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT,
+    UNIQUE(earlier_event_id, later_event_id, relation)
+);
+
+CREATE TABLE IF NOT EXISTS book_settings (
+    book_id INTEGER PRIMARY KEY REFERENCES books(id) ON DELETE CASCADE,
+    protagonist_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    auto_protagonist INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS synthesis_basis (
+    world_note_id INTEGER NOT NULL REFERENCES world_notes(id) ON DELETE CASCADE,
+    basis_type TEXT NOT NULL,
+    basis_id INTEGER NOT NULL,
+    PRIMARY KEY(world_note_id, basis_type, basis_id)
+);
+
+CREATE TABLE IF NOT EXISTS contradictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    left_type TEXT NOT NULL,
+    left_id INTEGER NOT NULL,
+    right_type TEXT NOT NULL,
+    right_id INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unreviewed',
+    resolution_reason TEXT NOT NULL DEFAULT '',
+    resolved_by TEXT NOT NULL DEFAULT '',
+    resolved_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, left_type, left_id, right_type, right_id, summary)
+);
+
+CREATE TABLE IF NOT EXISTS global_review_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    batch_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    completed_at TEXT,
+    UNIQUE(book_id, batch_hash, provider, model, prompt_version)
+);
+
+CREATE TABLE IF NOT EXISTS identity_clusters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    canonical_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    canonical_name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    merged_into_cluster_id INTEGER REFERENCES identity_clusters(id) ON DELETE SET NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    locked_subject INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'system',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS identity_cluster_members (
+    cluster_id INTEGER NOT NULL REFERENCES identity_clusters(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL UNIQUE REFERENCES entities(id) ON DELETE CASCADE,
+    source TEXT NOT NULL DEFAULT 'system',
+    confidence REAL NOT NULL DEFAULT 1.0,
+    decision_id INTEGER,
+    PRIMARY KEY(cluster_id, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS identity_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    left_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    right_entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    verdict TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    reason TEXT NOT NULL,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    contradictions_json TEXT NOT NULL DEFAULT '[]',
+    left_cluster_id INTEGER,
+    right_cluster_id INTEGER,
+    moved_entity_ids_json TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT NOT NULL DEFAULT 'system',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    undone_at TEXT,
+    UNIQUE(book_id, left_entity_id, right_entity_id, verdict, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS journey_legs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    subject_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    from_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    to_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    ordinal INTEGER NOT NULL,
+    transport TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL,
+    gap_status TEXT NOT NULL DEFAULT 'complete',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    first_segment INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT 'model',
+    UNIQUE(book_id, subject_entity_id, from_entity_id, to_entity_id, ordinal, first_segment)
+);
+
+CREATE TABLE IF NOT EXISTS record_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    field_name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    source TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS generation_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    instruction TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    title_value TEXT NOT NULL,
+    summary_value TEXT NOT NULL,
+    category_value TEXT NOT NULL,
+    attributes_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    applied_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS extraction_cache (
+    cache_key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_call_ledger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES analysis_jobs(id) ON DELETE SET NULL,
+    purpose TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cache_hit INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd REAL,
+    error TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS relationship_layouts (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    mode TEXT NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    z REAL NOT NULL DEFAULT 0,
+    pinned INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(book_id, entity_id, mode)
+);
+
+CREATE TABLE IF NOT EXISTS quality_benchmark_cases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    case_type TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    expected_json TEXT NOT NULL,
+    actual_json TEXT NOT NULL DEFAULT '{}',
+    passed INTEGER,
+    critical INTEGER NOT NULL DEFAULT 1,
+    source_segment INTEGER NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, case_type, subject, source_segment)
+);
+
+CREATE TABLE IF NOT EXISTS benchmark_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    case_type TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    expected_json TEXT NOT NULL,
+    source_segment INTEGER NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    critical INTEGER NOT NULL DEFAULT 1,
+    candidate_origin TEXT NOT NULL DEFAULT 'evidence_index',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'pending',
+    accepted_benchmark_id INTEGER REFERENCES quality_benchmark_cases(id) ON DELETE SET NULL,
+    resolution_note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT,
+    UNIQUE(book_id, case_type, subject, source_segment)
+);
+
+CREATE TABLE IF NOT EXISTS entity_connectivity_reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending',
+    mention_count INTEGER NOT NULL DEFAULT 0,
+    scanned_segment_count INTEGER NOT NULL DEFAULT 0,
+    source_segment_count INTEGER NOT NULL DEFAULT 0,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    confidence REAL NOT NULL DEFAULT 0,
+    reason TEXT NOT NULL DEFAULT '',
+    review_method TEXT NOT NULL DEFAULT 'deterministic',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS event_location_reviews (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'unresolved',
+    effective_location_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS quality_gate_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES analysis_jobs(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS quality_audit_cache (
+    cache_key TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_contracts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    version TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL,
+    quality_json TEXT NOT NULL DEFAULT '{}',
+    exclusions_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'draft',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    promoted_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS collaboration_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    original_text TEXT NOT NULL,
+    interpreted_goal TEXT NOT NULL,
+    acceptance_json TEXT NOT NULL DEFAULT '[]',
+    impact_json TEXT NOT NULL DEFAULT '[]',
+    estimated_cost_change_percent REAL NOT NULL DEFAULT 0,
+    requires_confirmation INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'interpreted',
+    regression_case_id INTEGER REFERENCES quality_benchmark_cases(id) ON DELETE SET NULL,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS prompt_bundle_versions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_key TEXT NOT NULL,
+    version TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft',
+    core_text TEXT NOT NULL,
+    task_text TEXT NOT NULL DEFAULT '',
+    change_note TEXT NOT NULL DEFAULT '',
+    parent_id INTEGER REFERENCES prompt_bundle_versions(id) ON DELETE SET NULL,
+    prompt_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    promoted_at TEXT,
+    UNIQUE(task_key, version)
+);
+
+CREATE TABLE IF NOT EXISTS domain_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    task_key TEXT NOT NULL DEFAULT 'all',
+    statement TEXT NOT NULL,
+    rationale TEXT NOT NULL DEFAULT '',
+    examples_json TEXT NOT NULL DEFAULT '[]',
+    priority INTEGER NOT NULL DEFAULT 100,
+    active INTEGER NOT NULL DEFAULT 1,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS external_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    statement TEXT NOT NULL,
+    source_label TEXT NOT NULL,
+    source_url TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS run_manifests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES analysis_jobs(id) ON DELETE SET NULL,
+    run_kind TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    auth_mode TEXT NOT NULL DEFAULT 'api',
+    contract_version TEXT NOT NULL,
+    prompt_bundle_id INTEGER REFERENCES prompt_bundle_versions(id) ON DELETE SET NULL,
+    prompt_hash TEXT NOT NULL,
+    domain_rule_hash TEXT NOT NULL,
+    external_fact_hash TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    eval_suite_version TEXT NOT NULL,
+    input_scope_json TEXT NOT NULL DEFAULT '{}',
+    input_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd REAL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    validation_json TEXT NOT NULL DEFAULT '{}',
+    conflict_json TEXT NOT NULL DEFAULT '[]',
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS model_routes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL UNIQUE,
+    model TEXT NOT NULL,
+    auth_mode TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    eligible INTEGER NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 100,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    circuit_open_until TEXT,
+    benchmark_json TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_race_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER REFERENCES books(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    suite_version TEXT NOT NULL,
+    total_cases INTEGER NOT NULL DEFAULT 0,
+    passed_cases INTEGER NOT NULL DEFAULT 0,
+    critical_failures INTEGER NOT NULL DEFAULT 0,
+    accuracy_percent REAL,
+    evidence_percent REAL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    estimated_cost_usd REAL,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    eligible INTEGER NOT NULL DEFAULT 0,
+    report_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_segments_book ON segments(book_id, ordinal);
+CREATE INDEX IF NOT EXISTS idx_library_folders_parent ON library_folders(parent_id, sort_order, name);
+CREATE INDEX IF NOT EXISTS idx_book_updates_book ON book_update_batches(book_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_entities_book ON entities(book_id, kind, first_segment);
+CREATE INDEX IF NOT EXISTS idx_claims_book ON claims(book_id, first_segment, status);
+CREATE INDEX IF NOT EXISTS idx_place_relations_book ON place_relations(book_id, first_segment);
+CREATE INDEX IF NOT EXISTS idx_events_book ON events(book_id, first_segment, narrative_order);
+CREATE INDEX IF NOT EXISTS idx_evidence_target ON evidence(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_entity_keys_lookup ON entity_keys(book_id, kind, normalized_name);
+CREATE INDEX IF NOT EXISTS idx_merge_candidates_book ON entity_merge_candidates(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON analysis_jobs(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_job_segments_status ON analysis_job_segments(job_id, status, ordinal);
+CREATE INDEX IF NOT EXISTS idx_segment_results_book ON segment_results(book_id, segment_id);
+CREATE INDEX IF NOT EXISTS idx_event_edges_book ON event_order_edges(book_id, earlier_event_id, later_event_id);
+CREATE INDEX IF NOT EXISTS idx_contradictions_book ON contradictions(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_global_reviews_book ON global_review_batches(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_identity_clusters_book ON identity_clusters(book_id, status, kind);
+CREATE INDEX IF NOT EXISTS idx_identity_decisions_book ON identity_decisions(book_id, verdict);
+CREATE INDEX IF NOT EXISTS idx_journey_legs_book ON journey_legs(book_id, ordinal, first_segment);
+CREATE INDEX IF NOT EXISTS idx_record_versions_target ON record_versions(target_type, target_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_generation_drafts_target ON generation_drafts(target_type, target_id, status);
+CREATE INDEX IF NOT EXISTS idx_model_call_ledger_book ON model_call_ledger(book_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_quality_benchmark_book ON quality_benchmark_cases(book_id, case_type, critical);
+CREATE INDEX IF NOT EXISTS idx_connectivity_reviews_book ON entity_connectivity_reviews(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_location_reviews_book ON event_location_reviews(book_id, status);
+CREATE INDEX IF NOT EXISTS idx_quality_snapshots_book ON quality_gate_snapshots(book_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_collaboration_book ON collaboration_items(book_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_prompt_bundles_task ON prompt_bundle_versions(task_key, status, id);
+CREATE INDEX IF NOT EXISTS idx_domain_rules_book ON domain_rules(book_id, task_key, active, priority);
+CREATE INDEX IF NOT EXISTS idx_external_facts_book ON external_facts(book_id, active);
+CREATE INDEX IF NOT EXISTS idx_run_manifests_book ON run_manifests(book_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_model_races_book ON model_race_runs(book_id, created_at);
+"""
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    """打开启用外键与行对象的连接。"""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path, timeout=30, check_same_thread=False)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+def initialize(path: Path) -> None:
+    """创建数据库表，并把中断任务恢复到可继续或可重试状态。"""
+
+    with connect(path) as connection:
+        connection.executescript(SCHEMA)
+        _migrate_cost_columns(connection)
+        _migrate_semantic_columns(connection)
+        _migrate_library_columns(connection)
+        _migrate_quality_harness(connection)
+        _migrate_control_plane(connection)
+        _repair_derived_self_routes(connection)
+        _repair_mismatched_evidence_segments(connection)
+        connection.execute(
+            """
+            UPDATE analysis_jobs
+            SET status = 'needs_review', quality_gate_status = 'needs_review',
+                error = '结构检查已完成；真实模型结果缺少至少 20 条人工金标准，尚不能承诺 95% 准确率',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'completed' AND provider NOT IN ('mock', 'demo')
+              AND (
+                SELECT COUNT(*) FROM quality_benchmark_cases benchmark
+                WHERE benchmark.book_id = analysis_jobs.book_id
+              ) < 20
+            """
+        )
+        from app.control_plane import ensure_control_plane_defaults
+
+        ensure_control_plane_defaults(connection)
+        connection.execute(
+            """
+            UPDATE analysis_jobs SET status = 'queued', error = '应用重启后自动续跑', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'running'
+            """
+        )
+        connection.execute(
+            """
+            UPDATE analysis_jobs SET status = 'needs_review', quality_gate_status = 'needs_review',
+                error = '质量复审被应用重启中断，可直接自动重试或人工解决', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'quality_checking'
+            """
+        )
+
+
+def _repair_derived_self_routes(connection: sqlite3.Connection) -> None:
+    """删除旧版本自动生成的同地点伪路线，事件和地点本身继续保留。"""
+
+    connection.execute(
+        """
+        DELETE FROM journey_legs
+        WHERE created_by = 'derived'
+          AND from_entity_id IS NOT NULL
+          AND from_entity_id = to_entity_id
+        """
+    )
+
+
+def _migrate_control_plane(connection: sqlite3.Connection) -> None:
+    """为旧数据库补齐透明协作、评估来源和逐次调用溯源字段。"""
+
+    additions: dict[str, tuple[str, ...]] = {
+        "quality_benchmark_cases": (
+            "suite_name TEXT NOT NULL DEFAULT 'book-gold'",
+            "origin TEXT NOT NULL DEFAULT 'manual'",
+            "holdout INTEGER NOT NULL DEFAULT 0",
+            "confirmed_by_user INTEGER NOT NULL DEFAULT 1",
+            "failure_category TEXT NOT NULL DEFAULT ''",
+        ),
+        "model_call_ledger": (
+            "run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL",
+            "prompt_hash TEXT NOT NULL DEFAULT ''",
+            "duration_ms INTEGER NOT NULL DEFAULT 0",
+            "auth_mode TEXT NOT NULL DEFAULT 'api'",
+        ),
+        "analysis_jobs": (
+            "run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL",
+        ),
+        "segment_results": (
+            "job_id INTEGER REFERENCES analysis_jobs(id) ON DELETE SET NULL",
+            "run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL",
+            "model_call_id INTEGER REFERENCES model_call_ledger(id) ON DELETE SET NULL",
+        ),
+        "evidence": (
+            "run_manifest_id INTEGER REFERENCES run_manifests(id) ON DELETE SET NULL",
+            "model_call_id INTEGER REFERENCES model_call_ledger(id) ON DELETE SET NULL",
+        ),
+    }
+    for table, definitions in additions.items():
+        existing = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+        for definition in definitions:
+            column = definition.split()[0]
+            if column not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+
+def _migrate_quality_harness(connection: sqlite3.Connection) -> None:
+    """为旧数据库补齐质量门禁状态和世界信息归档字段。"""
+
+    additions: dict[str, tuple[str, ...]] = {
+        "world_notes": (
+            "archived_at TEXT",
+        ),
+        "analysis_jobs": (
+            "quality_gate_status TEXT NOT NULL DEFAULT 'pending'",
+            "quality_gate_snapshot_id INTEGER REFERENCES quality_gate_snapshots(id) ON DELETE SET NULL",
+        ),
+        "entity_connectivity_reviews": (
+            "source_segment_count INTEGER NOT NULL DEFAULT 0",
+        ),
+    }
+    for table, definitions in additions.items():
+        existing = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+        for definition in definitions:
+            column = definition.split()[0]
+            if column not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+        connection.execute(
+            """
+            UPDATE analysis_job_segments SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'running'
+            """
+        )
+    # 旧版任务没有逐次调用账本。先保存其既有用量和费用，后续专项复审才能正确累加而非覆盖。
+    connection.execute(
+        """
+        INSERT INTO model_call_ledger(
+            book_id, job_id, purpose, provider, model, prompt_version, request_hash,
+            status, input_tokens, output_tokens, cache_hit_input_tokens,
+            cache_miss_input_tokens, estimated_cost_usd
+        )
+        SELECT job.book_id, job.id, 'legacy_analysis', job.provider, job.model,
+            job.prompt_version, 'legacy-job-' || job.id, 'completed',
+            job.input_tokens, job.output_tokens, job.cache_hit_input_tokens,
+            job.cache_miss_input_tokens, job.estimated_cost_usd
+        FROM analysis_jobs job
+        WHERE (job.input_tokens > 0 OR job.output_tokens > 0)
+          AND NOT EXISTS (
+              SELECT 1 FROM model_call_ledger ledger
+              WHERE ledger.job_id = job.id
+                AND ledger.purpose IN ('legacy_analysis', 'segment_extraction', 'global_review')
+          )
+        """
+    )
+
+
+def _repair_mismatched_evidence_segments(connection: sqlite3.Connection) -> None:
+    """修复旧任务把队列行号误存成原文章节编号的证据记录。"""
+
+    connection.execute(
+        """
+        UPDATE evidence AS evidence_row
+        SET segment_id = (
+            SELECT job_segment.segment_id
+            FROM analysis_job_segments job_segment
+            JOIN analysis_jobs job ON job.id = job_segment.job_id
+            WHERE job_segment.id = evidence_row.segment_id
+              AND job.book_id = evidence_row.book_id
+            ORDER BY job.id DESC LIMIT 1
+        )
+        WHERE EXISTS (
+            SELECT 1 FROM segments current_segment
+            WHERE current_segment.id = evidence_row.segment_id
+              AND current_segment.book_id != evidence_row.book_id
+        )
+          AND EXISTS (
+            SELECT 1 FROM analysis_job_segments job_segment
+            JOIN analysis_jobs job ON job.id = job_segment.job_id
+            WHERE job_segment.id = evidence_row.segment_id
+              AND job.book_id = evidence_row.book_id
+          )
+        """
+    )
+
+
+def _migrate_library_columns(connection: sqlite3.Connection) -> None:
+    """为旧书库补齐文件夹和更新时间字段。"""
+
+    existing = {str(row[1]) for row in connection.execute("PRAGMA table_info(books)")}
+    additions = (
+        "folder_id INTEGER REFERENCES library_folders(id) ON DELETE SET NULL",
+        "updated_at TEXT NOT NULL DEFAULT ''",
+    )
+    for definition in additions:
+        column = definition.split()[0]
+        if column not in existing:
+            connection.execute(f"ALTER TABLE books ADD COLUMN {definition}")
+    connection.execute(
+        "UPDATE books SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''"
+    )
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_books_folder ON books(folder_id, updated_at)")
+
+
+def _migrate_cost_columns(connection: sqlite3.Connection) -> None:
+    """为旧数据库补齐令牌明细和价格快照字段。"""
+
+    additions: dict[str, tuple[str, ...]] = {
+        "analysis_jobs": (
+            "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_hit_input_usd_per_million REAL",
+            "cache_miss_input_usd_per_million REAL",
+            "output_usd_per_million REAL",
+            "estimated_cost_usd REAL",
+            "pricing_source TEXT NOT NULL DEFAULT ''",
+            "pricing_effective_date TEXT NOT NULL DEFAULT ''",
+            "max_cost_usd REAL NOT NULL DEFAULT 0.5",
+            "max_input_tokens INTEGER NOT NULL DEFAULT 500000",
+            "max_output_tokens INTEGER NOT NULL DEFAULT 120000",
+            "estimated_before_start_usd REAL",
+            "budget_status TEXT NOT NULL DEFAULT 'within_budget'",
+            "budget_mode TEXT NOT NULL DEFAULT 'adaptive'",
+            "budget_adjustments INTEGER NOT NULL DEFAULT 0",
+            "review_mode TEXT NOT NULL DEFAULT 'local'",
+            "cache_reused_segments INTEGER NOT NULL DEFAULT 0",
+        ),
+        "analysis_job_segments": (
+            "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0",
+        ),
+        "analysis_job_review_usage": (
+            "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0",
+        ),
+        "segment_results": (
+            "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0",
+        ),
+        "global_review_batches": (
+            "cache_hit_input_tokens INTEGER NOT NULL DEFAULT 0",
+            "cache_miss_input_tokens INTEGER NOT NULL DEFAULT 0",
+        ),
+    }
+    for table, definitions in additions.items():
+        existing = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+        for definition in definitions:
+            column = definition.split()[0]
+            if column not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+    for table in (
+        "analysis_job_segments",
+        "analysis_job_review_usage",
+        "segment_results",
+        "global_review_batches",
+    ):
+        connection.execute(
+            f"""
+            UPDATE {table} SET cache_miss_input_tokens = input_tokens
+            WHERE input_tokens > 0 AND cache_hit_input_tokens + cache_miss_input_tokens = 0
+            """
+        )
+    connection.execute(
+        """
+        UPDATE analysis_jobs SET
+            cache_miss_input_tokens = CASE
+                WHEN cache_hit_input_tokens + cache_miss_input_tokens = 0 THEN input_tokens
+                ELSE cache_miss_input_tokens
+            END,
+            cache_hit_input_usd_per_million = CASE
+                WHEN model = 'deepseek-reasoner' THEN 0.14 ELSE 0.07
+            END,
+            cache_miss_input_usd_per_million = CASE
+                WHEN model = 'deepseek-reasoner' THEN 0.55 ELSE 0.27
+            END,
+            output_usd_per_million = CASE
+                WHEN model = 'deepseek-reasoner' THEN 2.19 ELSE 1.10
+            END,
+            pricing_source = 'DeepSeek 官方价格页；旧任务按当前价补算',
+            pricing_effective_date = '2026-08-23'
+        WHERE provider = 'deepseek' AND cache_hit_input_usd_per_million IS NULL
+        """
+    )
+
+
+def _migrate_semantic_columns(connection: sqlite3.Connection) -> None:
+    """为旧数据库补齐叙事坐标和时间约束状态。"""
+
+    additions: dict[str, tuple[str, ...]] = {
+        "events": (
+            "narrative_phase TEXT NOT NULL DEFAULT 'main'",
+            "narrative_offset INTEGER NOT NULL DEFAULT 0",
+        ),
+        "event_order_edges": (
+            "status TEXT NOT NULL DEFAULT 'accepted'",
+            "reason TEXT NOT NULL DEFAULT ''",
+            "evidence_json TEXT NOT NULL DEFAULT '[]'",
+            "resolution_reason TEXT NOT NULL DEFAULT ''",
+            "resolved_by TEXT NOT NULL DEFAULT ''",
+            "resolved_at TEXT",
+        ),
+        "entity_merge_candidates": (
+            "resolution_reason TEXT NOT NULL DEFAULT ''",
+            "resolved_by TEXT NOT NULL DEFAULT ''",
+            "resolved_at TEXT",
+        ),
+        "contradictions": (
+            "resolution_reason TEXT NOT NULL DEFAULT ''",
+            "resolved_by TEXT NOT NULL DEFAULT ''",
+            "resolved_at TEXT",
+        ),
+    }
+    for table, definitions in additions.items():
+        existing = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+        for definition in definitions:
+            column = definition.split()[0]
+            if column not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+    connection.execute(
+        """
+        UPDATE analysis_jobs SET
+            estimated_cost_usd = CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM model_call_ledger ledger
+                    WHERE ledger.job_id = analysis_jobs.id
+                      AND ledger.status IN ('completed', 'cache_reused', 'failed')
+                ) AND NOT EXISTS (
+                    SELECT 1 FROM model_call_ledger ledger
+                    WHERE ledger.job_id = analysis_jobs.id
+                      AND ledger.status IN ('completed', 'cache_reused', 'failed')
+                      AND ledger.estimated_cost_usd IS NULL
+                ) THEN ROUND((
+                    SELECT COALESCE(SUM(ledger.estimated_cost_usd), 0)
+                    FROM model_call_ledger ledger
+                    WHERE ledger.job_id = analysis_jobs.id
+                      AND ledger.status IN ('completed', 'cache_reused', 'failed')
+                ), 8)
+                ELSE ROUND((
+                    cache_hit_input_tokens * cache_hit_input_usd_per_million
+                    + cache_miss_input_tokens * cache_miss_input_usd_per_million
+                    + output_tokens * output_usd_per_million
+                ) / 1000000.0, 8)
+            END
+        WHERE cache_hit_input_usd_per_million IS NOT NULL
+          AND cache_miss_input_usd_per_million IS NOT NULL
+          AND output_usd_per_million IS NOT NULL
+        """
+    )
+@contextmanager
+def transaction(path: Path) -> Iterator[sqlite3.Connection]:
+    """在异常时回滚，在成功时提交。"""
+
+    connection = connect(path)
+    try:
+        connection.execute("BEGIN")
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()

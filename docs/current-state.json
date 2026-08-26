@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "product": "小说证据图谱",
+  "release": "2.6.0",
+  "status": "local_gates_passed",
+  "source_commit": "pending",
+  "active_objective": "完成任务防飘移、StoryMapStep 驱动的 2D/3D 双视图收敛、黑白极简界面、安全 GitHub 发布和 Authentik 保护的 VPS 部署",
+  "contracts": {
+    "fact_source": "原文证据",
+    "chronology_source": "overview.story_map_steps",
+    "map_2d_source": "overview.story_map_steps",
+    "map_3d_source": "overview.story_map_steps",
+    "unknown_policy": "未知不补猜",
+    "public_data_policy": "只允许空库或合成演示数据"
+  },
+  "quality_gate": {
+    "unit_tests": "passed:98",
+    "javascript_syntax": "passed",
+    "browser_console_errors": "passed",
+    "map_step_parity": "passed:2d-3d-120-steps",
+    "rapid_navigation": "passed",
+    "responsive_layout": "passed:720px",
+    "safe_publish": "pending",
+    "public_authentication": "pending"
+  },
+  "publication": {
+    "github": "pending",
+    "deployment": "pending",
+    "hostname": "novel.aialra.online",
+    "authentication": "ExampleOrg Authentik unified gateway"
+  },
+  "last_updated": "2026-08-26"
+}

@@ -1,0 +1,142 @@
+{
+  "meta": {
+    "contract_version": "1.0",
+    "title": "小说证据图谱地图与编年统一重构",
+    "mode": "standard",
+    "as_of": "2026-08-25",
+    "status": "complete",
+    "scope": "关系图全量展示、地图与编年统一、方位和标签布局、自动适配分析预算。",
+    "exclusions": ["本次只形成重构决策和验收设计，不重跑生产数据或发布安装包。", "不把缺少证据的地理方位补为推测事实。"]
+  },
+  "decision_problem": {
+    "project_classification": "已运行本地小说分析产品的高风险架构重构",
+    "risk_level": "高：地图、编年、成本控制和真实小说数据会共同影响用户对事实的判断。",
+    "decision_owner": "产品所有者",
+    "desired_outcome": "编年和逻辑地图从同一份可追溯故事步骤派生；关系图完整展示全部事实；任务在书级策略内自动适配用量。",
+    "current_state": "关系图默认截断为核心子集。抽检书籍只显示 32/33 个节点和 76/126 条关系；逻辑地图显示主线人物的 31/129 个事件，24 个地点只有 2 条原文方位关系。",
+    "decision": "停止在现有双序列地图上修补，改为以 StoryMapStep 为中心的数据合同和确定性布局；固定上限改为质量门禁驱动的自动预算策略。",
+    "success_metrics": [
+      "同书编年和地图返回完全相同的有序事件 ID 列表和步数。",
+      "关系图、2D、3D 和文字清单都包含 100% 已确认实体和关系。",
+      "展示的方位、行程和地点状态均能回到原文；没有证据时明确显示拓扑关系或位置未知。",
+      "连续 20 次快速点击、拖动或播放后，地图标记、故事卡片和编年选中事件一致。",
+      "书级批准范围内自动扩展并续跑；实际成本、令牌或 CLI 用量可追溯，熔断时暂停一次给出选择。"
+    ],
+    "constraints": ["正式事实必须有逐字原文证据。", "不能将访问顺序伪装为真实地理方位。", "不能把 ChatGPT 订阅额度伪造为美元成本。", "保留书库、增量更新、冲突解决和结果溯源。"],
+    "irreversible_actions": ["迁移既有任务的地图步骤数据。", "替换地图接口的默认语义。"],
+    "research_budget": {
+      "overall_limit": "完成当前仓库、实际浏览器和公开文档审计；不发起模型调用。",
+      "parallel_capacity": 1,
+      "paid_or_private_access": ["本地应用数据库与源代码", "用户提供的浏览器截图与反馈", "公开布局文档、论文与仓库"],
+      "cutoff_policy": "代码、运行数据和用户复现均确认根因后停止扩大检索；模型实际质量留给重构后的保留测试。"
+    },
+    "reversal_evidence": ["统一步骤在两本真实小说上无法使地图、编年和原文跳转共用同一事件 ID。", "自动扩展使合格事实成本超过基线 10% 且准确率未提升。"]
+  },
+  "questions": [
+    {"id":"Q1","question":"关系图为何遗漏已确认关系，完整展示后如何保持可读性？","critical":true,"internal_probe":"检查状态、截断函数和实际显示计数。","external_probe":"核对图形库的布局、标签与缩放能力。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-REL","S-RUNTIME"],"external_source_ids":["S-CYTO"],"internal_gap":"","external_gap":""},
+    {"id":"Q2","question":"逻辑地图为何和编年不是同一故事序列，怎样让两者同步？","critical":true,"internal_probe":"检查概览接口的主角、旅程和完整事件筛选路径。","external_probe":"核对叙事地图的事件、路线和覆盖约束。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-MAP","S-RUNTIME"],"external_source_ids":["S-NARRATIVE"],"internal_gap":"","external_gap":""},
+    {"id":"Q3","question":"方位稀疏时怎样避免地图错位和文字、路线遮挡？","critical":true,"internal_probe":"检查方位数量、随机布局、固定画布和路线标签。","external_probe":"核对确定性布局、边路由和标签尺寸处理。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-MAP","S-RUNTIME"],"external_source_ids":["S-ELK","S-CYTO"],"internal_gap":"","external_gap":""},
+    {"id":"Q4","question":"如何取消人为固定分析上限，同时防止失控消耗和重复调用？","critical":true,"internal_probe":"检查成本控制器、任务默认值和暂停记录。","external_probe":"核对用量、结构化输出和速率限制边界。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-BUDGET","S-RUNTIME"],"external_source_ids":["S-OPENAI"],"internal_gap":"","external_gap":""}
+  ],
+  "source_map": [
+    {"id":"M1","question_ids":["Q1"],"origin":"internal","channel":"源代码和浏览器","target":"关系图截断与显示计数","decision_use":"确认遗漏根因","priority":"high","access_status":"searched"},
+    {"id":"M2","question_ids":["Q1"],"origin":"external","channel":"官方文档","target":"Cytoscape 布局与标签","decision_use":"确定全量图交互","priority":"medium","access_status":"searched"},
+    {"id":"M3","question_ids":["Q2"],"origin":"internal","channel":"源代码和浏览器","target":"journey_events 和完整事件路径","decision_use":"确认双序列根因","priority":"high","access_status":"searched"},
+    {"id":"M4","question_ids":["Q2"],"origin":"external","channel":"同行评审研究","target":"Narrative Maps","decision_use":"确定单一事件序列原则","priority":"medium","access_status":"searched"},
+    {"id":"M5","question_ids":["Q3"],"origin":"internal","channel":"源代码和浏览器","target":"方位、随机布局和画布标签","decision_use":"确认错位和遮挡根因","priority":"high","access_status":"searched"},
+    {"id":"M6","question_ids":["Q3"],"origin":"external","channel":"官方文档","target":"ELK 节点、边、标签和路由","decision_use":"确定性布局","priority":"high","access_status":"searched"},
+    {"id":"M7","question_ids":["Q4"],"origin":"internal","channel":"源代码和运行记录","target":"预算估算和暂停规则","decision_use":"自动适配设计","priority":"high","access_status":"searched"},
+    {"id":"M8","question_ids":["Q4"],"origin":"external","channel":"官方 OpenAI 文档","target":"响应使用量和服务限制","decision_use":"限定可观测和熔断边界","priority":"medium","access_status":"searched"}
+  ],
+  "sources": [
+    {"id":"S-REL","origin":"internal","title":"关系图截断检查","location":"F:/ExampleOrg Codex Workspace/ExampleOrg-FAST-NOVEL/static/app.js","source_type":"source-code","retrieval_method":"本地源代码直接检查","observed_content":"relationshipDensity 默认 core；relationshipSubset 将节点截断到 32、关系截断到 76。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"直接解释关系遗漏。","limitations":"未衡量超大图性能。","direct":true,"independence_group":"local-code"},
+    {"id":"S-MAP","origin":"internal","title":"地图与编年数据链检查","location":"F:/ExampleOrg Codex Workspace/ExampleOrg-FAST-NOVEL/app/api.py; F:/ExampleOrg Codex Workspace/ExampleOrg-FAST-NOVEL/static/app.js","source_type":"source-code","retrieval_method":"本地源代码直接检查","observed_content":"接口优先将 journey_events 改为主角相关事件；地图仅用方位关系，randomize=true 的固定 900×470 SVG，并在画布上直接绘制路线文本。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"直接解释步数脱节、方位不足和标签遮挡。","limitations":"需要重构后多书验证。","direct":true,"independence_group":"local-code"},
+    {"id":"S-BUDGET","origin":"internal","title":"成本控制与任务上限检查","location":"F:/ExampleOrg Codex Workspace/ExampleOrg-FAST-NOVEL/app/cost_control.py; F:/ExampleOrg Codex Workspace/ExampleOrg-FAST-NOVEL/app/jobs.py","source_type":"source-code","retrieval_method":"本地源代码直接检查","observed_content":"任务创建使用固定金额、输入和输出上限；预计下一次请求超限时任务暂停。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"直接解释自动任务被预算预估暂停。","limitations":"未包含供应商实际配额接口。","direct":true,"independence_group":"local-code"},
+    {"id":"S-RUNTIME","origin":"internal","title":"真实书籍浏览器与接口抽检","location":"tool:playwright/mapaudit","source_type":"test-observation","retrieval_method":"运行中浏览器与接口观察","observed_content":"书籍 86 显示 32/33 节点、76/126 关系；完整编年 129 事件，地图 31；24 地点仅 2 条方位关系，31 行程中 23 步地点未确认。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"把代码路径和用户页面结果相互印证。","limitations":"单书抽样。","direct":true,"independence_group":"runtime-observation"},
+    {"id":"S-USER","origin":"internal","title":"产品所有者需求记录","location":"tool:conversation/user-request-2026-08-25","source_type":"interview-record","retrieval_method":"当前对话直接记录","observed_content":"用户要求取消核心和全部关系区分、地图顺着编年、自动调整上限，并要求修复文字和 UI 混乱。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"确定产品验收方向。","limitations":"未指定书级紧急保护线数值。","direct":true,"independence_group":"product-owner"},
+    {"id":"S-CYTO","origin":"external","title":"Cytoscape.js 官方文档","location":"https://js.cytoscape.org/","source_type":"official-doc","retrieval_method":"公开官方页面直接读取","observed_content":"文档列出 fCoSE、Dagre、ELK 布局扩展，并说明布局和标签定位能力。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"支持完整关系图的布局、缩放和标签策略。","limitations":"库能力不保证本产品数据质量。","direct":true,"independence_group":"cytoscape-project"},
+    {"id":"S-ELK","origin":"external","title":"Eclipse Layout Kernel 官方文档","location":"https://eclipse.dev/elk/","source_type":"official-doc","retrieval_method":"公开官方页面直接读取","observed_content":"ELK 提供图布局算法和查看器、编辑器的连接基础设施；文档包含节点、标签、边、边路由和间距选项。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"支持确定性步骤图和边路由。","limitations":"只计算布局，不提供小说语义。","direct":true,"independence_group":"eclipse-foundation"},
+    {"id":"S-NARRATIVE","origin":"external","title":"Narrative Maps 研究","location":"https://arxiv.org/abs/2009.04508","source_type":"primary-research","retrieval_method":"公开论文摘要直接读取","observed_content":"研究将事件作为叙事地图地标和路线，并用连贯性、结构和覆盖约束构建图。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"支持以事件序列作为地图数据源。","limitations":"不等同于小说地理地图产品。","direct":true,"independence_group":"paper-authors"},
+    {"id":"S-MIROFISH","origin":"external","title":"MiroFish 公开仓库","location":"https://github.com/666ghj/MiroFish","source_type":"product-page","retrieval_method":"公开仓库页面直接读取","observed_content":"项目分为 Graph Building、环境准备、模拟、报告和交互；图构建包含种子抽取、记忆注入和 GraphRAG。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"提供阶段化图构建参考。","limitations":"目标是群体模拟。","direct":true,"independence_group":"mirofish-project"},
+    {"id":"S-OPENAI","origin":"external","title":"OpenAI Codex CLI 与模型文档","location":"https://developers.openai.com/codex/cli/reference/","source_type":"official-doc","retrieval_method":"官方文档直接读取","observed_content":"官方文档涵盖 Codex CLI；模型和响应文档公开结构化输出、使用量字段和速率限制。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"限定 CLI 用量和 API 预算统计的表达。","limitations":"订阅计划的单次美元成本未由页面给出。","direct":true,"independence_group":"openai"},
+    {"id":"SL-PROBLEM","origin":"external","title":"问题分支搜索记录","location":"tool:web.run/2026-08-25/problem","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索叙事可视化、故事时间和地理地图耦合问题。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"问题空间检索。","limitations":"结果会变化。","direct":true,"independence_group":"web-problem"},
+    {"id":"SL-MECH","origin":"external","title":"机制分支搜索记录","location":"tool:web.run/2026-08-25/mechanism","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索 ELK 的布局和边路由机制。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"布局机制检索。","limitations":"仅限公开资料。","direct":true,"independence_group":"web-mechanism"},
+    {"id":"SL-PRODUCT","origin":"external","title":"产品分支搜索记录","location":"tool:web.run/2026-08-25/product","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索 MiroFish 图构建架构。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"相邻产品检索。","limitations":"公开页面不等于完整设计。","direct":true,"independence_group":"web-product"},
+    {"id":"SL-RESEARCH","origin":"external","title":"研究分支搜索记录","location":"tool:web.run/2026-08-25/research","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索 Narrative Maps 和叙事地图设计指南。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"同行研究检索。","limitations":"研究不等于端到端实现。","direct":true,"independence_group":"web-research"},
+    {"id":"SL-ADJ","origin":"external","title":"相邻方案搜索记录","location":"tool:web.run/2026-08-25/adjacent","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索知识图谱叙事制图和图布局工具。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"相邻技术检索。","limitations":"不覆盖闭源工具。","direct":true,"independence_group":"web-adjacent"},
+    {"id":"SL-FAIL","origin":"external","title":"失败模式搜索记录","location":"tool:web.run/2026-08-25/failure","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索图标签重叠、边标签和长时间图构建卡住。","date":"2026-08-25","accessed_at":"2026-08-25","applicability":"失败模式检索。","limitations":"公开问题报告不能证明全部故障。","direct":true,"independence_group":"web-failure"}
+  ],
+  "claims": [
+    {"id":"C1","statement":"当前关系图默认截断已确认实体和关系，因此核心关系不是视觉提示，而是事实遗漏。","kind":"fact","impact":"high","confidence":"high","support_source_ids":["S-REL","S-RUNTIME"],"contradict_source_ids":[],"falsifier":"删除截断后仍有已确认关系不在图或文字清单中。"},
+    {"id":"C2","statement":"当前逻辑地图取主角相关 journey_events，而编年采用完整事件集合；31/129 证明两者不共享故事序列。","kind":"fact","impact":"high","confidence":"high","support_source_ids":["S-MAP","S-RUNTIME"],"contradict_source_ids":[],"falsifier":"重构前后比对发现两个接口已使用同一有序事件 ID 列表。"},
+    {"id":"C3","statement":"两条原文方位关系不足以为 24 个地点建立地理方向；随机布局和直接路线文字会让示意位置被误读为地理事实。","kind":"inference","impact":"high","confidence":"high","support_source_ids":["S-MAP","S-RUNTIME","S-ELK"],"contradict_source_ids":[],"falsifier":"补齐全部地点的原文方位约束后，现有布局仍无需随机位置且标签无碰撞。"},
+    {"id":"C4","statement":"固定上限会在预估下一次请求超限时暂停任务，需要改为质量门禁驱动的书级自动适配。","kind":"fact","impact":"high","confidence":"high","support_source_ids":["S-BUDGET","S-RUNTIME","S-OPENAI"],"contradict_source_ids":[],"falsifier":"现有控制器已能在不改变上限时自动继续超限任务。"},
+    {"id":"C5","statement":"单一带证据的 StoryMapStep 序列可让编年、地图动画、故事卡片和原文跳转共用选中状态。","kind":"inference","impact":"high","confidence":"medium","support_source_ids":["S-NARRATIVE","S-MAP"],"contradict_source_ids":[],"falsifier":"原型使用同一步骤 ID 后仍出现独立状态漂移。"},
+    {"id":"C6","statement":"MiroFish 的阶段化图构建值得参考，但群体模拟目标不能替代本产品的原文证据和阅读路线模型。","kind":"inference","impact":"medium","confidence":"high","support_source_ids":["S-MIROFISH","S-USER"],"contradict_source_ids":[],"falsifier":"其公开设计原生覆盖逐字原文证据、小说编年和地理约束。"}
+  ],
+  "assumptions": [
+    {"id":"A1","statement":"用户认可在书级策略内自动扩展，达到紧急保护线、质量熔断或配额异常时暂停一次。","critical":true,"status":"uncertain","decision_impact":"决定自动预算的保护线和暂停文案。","falsifier":"用户要求任何情况下不得暂停或每次扩展都人工确认。","support_source_ids":["S-USER"],"contradict_source_ids":[]},
+    {"id":"A2","statement":"缺少原文方位时应保留为拓扑关系或未知，不能从访问顺序推导方向。","critical":true,"status":"supported","decision_impact":"决定地图是否允许推测坐标。","falsifier":"用户提供授权世界地图并要求作为外部事实层。","support_source_ids":["S-USER","S-RUNTIME"],"contradict_source_ids":[]},
+    {"id":"A3","statement":"全量关系图在缩小时可隐藏文字标签但不得删除节点和边。","critical":true,"status":"untested","decision_impact":"决定全量图渲染策略。","falsifier":"用户要求任意缩放都显示全部文字。","support_source_ids":[],"contradict_source_ids":[]}
+  ],
+  "search_branches": [
+    {"name":"adjacent","status":"executed","reason":"","round_ids":["R-ADJ"]},
+    {"name":"code","status":"not_applicable","reason":"代码根因已由本地源代码直接检查，不需要外部代码查重。","round_ids":[]},
+    {"name":"failure","status":"executed","reason":"","round_ids":["R-FAIL"]},
+    {"name":"mechanism","status":"executed","reason":"","round_ids":["R-MECH"]},
+    {"name":"patent","status":"not_applicable","reason":"内部产品重构不提出专利新颖性或自由实施结论。","round_ids":[]},
+    {"name":"problem","status":"executed","reason":"","round_ids":["R-PROBLEM"]},
+    {"name":"product","status":"executed","reason":"","round_ids":["R-PRODUCT"]},
+    {"name":"research","status":"executed","reason":"","round_ids":["R-RESEARCH"]}
+  ],
+  "search_rounds": [
+    {"id":"R-PROBLEM","branch":"problem","query":"narrative visualization map chronology story event geography graph layout","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"关键词与论文检索","search_log_source_id":"SL-PROBLEM","new_candidate_ids":["K-NARRATIVE"],"evidence_source_ids":["S-NARRATIVE"],"new_high_similarity_count":0,"new_decision_evidence_count":1},
+    {"id":"R-MECH","branch":"mechanism","query":"site:eclipse.dev/elk graph layout edge routing labels","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"官方文档检索","search_log_source_id":"SL-MECH","new_candidate_ids":["K-ELK"],"evidence_source_ids":["S-ELK"],"new_high_similarity_count":0,"new_decision_evidence_count":1},
+    {"id":"R-PRODUCT","branch":"product","query":"site:github.com/666ghj/MiroFish Graph Building","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"公开仓库检索","search_log_source_id":"SL-PRODUCT","new_candidate_ids":["K-MIROFISH"],"evidence_source_ids":["S-MIROFISH"],"new_high_similarity_count":0,"new_decision_evidence_count":1},
+    {"id":"R-RESEARCH","branch":"research","query":"narrative map design guidelines event graph coverage","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"论文检索","search_log_source_id":"SL-RESEARCH","new_candidate_ids":[],"evidence_source_ids":["S-NARRATIVE"],"new_high_similarity_count":0,"new_decision_evidence_count":1},
+    {"id":"R-ADJ","branch":"adjacent","query":"narrative cartography knowledge graph geographic visualization","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"相邻领域检索","search_log_source_id":"SL-ADJ","new_candidate_ids":[],"evidence_source_ids":["S-ELK"],"new_high_similarity_count":0,"new_decision_evidence_count":0},
+    {"id":"R-FAIL","branch":"failure","query":"graph visualization label overlap edge routing long graph building failure","channel":"公开网络检索","date":"2026-08-25","discovery_mode":"失败模式检索","search_log_source_id":"SL-FAIL","new_candidate_ids":[],"evidence_source_ids":["S-ELK","S-MIROFISH"],"new_high_similarity_count":0,"new_decision_evidence_count":0}
+  ],
+  "candidates": [
+    {"id":"K-MIROFISH","name":"MiroFish","class":"partial","verified":true,"source_ids":["S-MIROFISH"]},
+    {"id":"K-ELK","name":"Eclipse Layout Kernel","class":"adjacent","verified":true,"source_ids":["S-ELK"]},
+    {"id":"K-NARRATIVE","name":"Narrative Maps 研究方法","class":"analogy","verified":true,"source_ids":["S-NARRATIVE"]}
+  ],
+  "novelty": {
+    "applicable": true,
+    "applicability_reason": "本轮使用外部产品与研究作为架构参考，需要说明相似性边界。",
+    "assessment": "insufficient-evidence",
+    "stop_reason": "access-limited",
+    "saturation_round_ids": [],
+    "languages": ["中文", "英文"],
+    "regions": ["公开全球网络资料"],
+    "access_gaps": [{"resource":"闭源产品的内部实现与完整评测数据","impact":"不能声称对所有同类产品完成穷尽比较。","critical":false}],
+    "scope_statement": "已检查公开仓库、官方布局文档和可访问论文；结论仅用于内部重构取舍，不构成专利、市场覆盖或独创性结论。"
+  },
+  "perspectives": [
+    {"id":"P1","lens":"事实完整性","producer":"浏览器与接口观察工具","producer_type":"tool","producer_reference":"S-RUNTIME","independent":false,"findings":["实际页面计数证实关系图遗漏。","实际接口计数证实地图和编年步数不同。"],"limitations":"只观察一本书。","source_ids":["S-RUNTIME"],"context_isolated":false},
+    {"id":"P2","lens":"数据模型与实现","producer":"本地源代码检查工具","producer_type":"tool","producer_reference":"S-MAP","independent":false,"findings":["主角筛选产生与编年不同的旅程序列。","随机布局和固定画布造成不稳定呈现。"],"limitations":"不预测重构后模型抽取质量。","source_ids":["S-REL","S-MAP","S-BUDGET"],"context_isolated":false},
+    {"id":"P3","lens":"图可视化与运行治理","producer":"公开文档检索工具","producer_type":"tool","producer_reference":"S-ELK","independent":false,"findings":["布局需要明确节点、边、标签和路由数据。","叙事地图强调事件结构和覆盖。","服务用量存在可观测和限制边界。"],"limitations":"外部资料不能替代端到端验收。","source_ids":["S-ELK","S-CYTO","S-NARRATIVE","S-OPENAI"],"context_isolated":false}
+  ],
+  "real_world_validations": [
+    {"id":"V1","role":"产品所有者","participant_reference":"当前对话中的产品所有者","method":"对实际应用截图和交互结果提出复现要求","conducted_at":"2026-08-25","outcome":"已明确要求取消截断、统一地图与编年、修复文字 UI、自动适配预算。","limitations":"未指定紧急保护线数值。","status":"completed","evidence_source_ids":["S-USER"]},
+    {"id":"V2","role":"真实小说阅读流程","participant_reference":"本地书籍 86","method":"运行中浏览器和接口抽检","conducted_at":"2026-08-25","outcome":"已复现关系遗漏、31/129 步数差异、方位稀疏和标签混乱。","limitations":"只覆盖一个书籍样本。","status":"completed","evidence_source_ids":["S-RUNTIME"]}
+  ],
+  "alignment_questions": [
+    {"id":"AQ1","question":"书级预算自动适配时何时要求人工确认？","decision_changing":true,"status":"defaulted","default_value":"批准书级范围内自动扩展；达到紧急保护线、质量熔断或配额异常时暂停一次并显示实际消耗和剩余估算。"},
+    {"id":"AQ2","question":"没有原文方位的地点采用什么地图表达？","decision_changing":true,"status":"answered"},
+    {"id":"AQ3","question":"关系图缩小时是否允许隐藏文字标签？","decision_changing":true,"status":"defaulted","default_value":"允许；节点和边始终存在，悬停、搜索、焦点和文字清单能查看全部名称与关系。"}
+  ],
+  "recommendation": {
+    "verdict": "pause",
+    "action": "等待产品所有者确认本方案后，按数据合同、地图投影、交互、预算、真实小说验收的顺序实施。",
+    "rationale": "根因已有直接证据：关系图默认截断，地图和编年使用不同事件集合，方位不足但布局仍随机，预算策略使用固定硬上限。继续局部修补会保留错误的数据语义。",
+    "strongest_counterevidence": "统一步骤模型会有接口迁移和存量回填成本；真实小说地点方位可能天然稀疏，重构不能凭空增加地理事实。",
+    "minimum_test": "先在书籍 86 构建 129 个 StoryMapStep，断言地图、编年和原文跳转的事件 ID 数组相同；再用两本真实小说测试全量关系图、碰撞、快速点击和自动预算恢复。",
+    "failure_response": "任何测试书出现步数、事件 ID 或证据不一致时停止扩大到全库，保留原版本只读查看，修复步骤生成器和证据模型。",
+    "reversal_condition": "确定性步骤原型无法同时满足同步、无推测方位和可读性阈值时，不替换旧地图，先发布纯编年路线视图。",
+    "support_source_ids":["S-REL","S-MAP","S-BUDGET","S-RUNTIME","S-NARRATIVE","S-ELK"],
+    "counter_source_ids":["S-USER","S-OPENAI"]
+  },
+  "review_triggers": ["地图步数、事件 ID 或当前选中状态与编年不一致。", "展示的方向、地点沿用或交通方式没有逐字原文证据。", "全量关系图静默丢失节点或边。", "自动预算扩展后合格事实成本超过基线 10% 且质量没有提升。", "真实小说出现未覆盖的多主角、并行叙事或无地点事件模式。"]
+}
