@@ -45,12 +45,25 @@ def test_map_3d_does_not_invent_random_geography() -> None:
     assert "point.y - centerY" in implementation
 
 
-def test_map_without_direction_uses_chronology_schematic_instead_of_random_force() -> None:
+def test_map_without_direction_uses_stable_semantic_projection_instead_of_grid() -> None:
     script = _text("static/app.js")
-    assert "function chronologySchematicLayout(locations, journey)" in script
-    assert "const directionCoverage" in script
-    assert "directionCoverage < 0.35" in script
-    assert "return chronologySchematicLayout(locations, journey)" in script
+    assert "function chronologySchematicLayout" not in script
+    assert "function stableTopologyFallback(locations)" in script
+    assert "state.mapLayout?.nodes" in script
+    assert "stable_topology_projection" in script
+    assert 'data-presentation="atlas"' in script
+    assert 'data-presentation="evidence"' in script
+
+
+def test_data_canvases_share_semantic_colors_across_2d_and_3d() -> None:
+    script = _text("static/app.js")
+    styles = _text("static/styles.css")
+    assert "const semanticPalette" in script
+    assert "semanticPalette.place" in script
+    assert "semanticPalette.current" in script
+    assert "--data-person: #0f6cbd" in styles
+    assert "--data-place: #4856a6" in styles
+    assert ".semantic-region.region-0" in styles
 
 
 def test_rapid_navigation_keeps_separate_live_positions_for_both_renderers() -> None:

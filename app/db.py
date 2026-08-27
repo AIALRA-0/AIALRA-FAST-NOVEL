@@ -756,6 +756,163 @@ CREATE TABLE IF NOT EXISTS model_race_runs (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS map_layout_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    layout_version TEXT NOT NULL,
+    stable_seed TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, layout_version, source_hash)
+);
+
+CREATE TABLE IF NOT EXISTS event_narrative_frames (
+    event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    cause TEXT NOT NULL DEFAULT '',
+    trigger_text TEXT NOT NULL DEFAULT '',
+    goal TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    outcome TEXT NOT NULL DEFAULT '',
+    state_changes_json TEXT NOT NULL DEFAULT '[]',
+    open_threads_json TEXT NOT NULL DEFAULT '[]',
+    resolved_threads_json TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT NOT NULL DEFAULT 'model',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS event_causal_links (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    source_event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    target_event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT NOT NULL DEFAULT 'model',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, source_event_id, target_event_id, relation)
+);
+
+CREATE TABLE IF NOT EXISTS character_states (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    through_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    location_entity_id INTEGER REFERENCES entities(id) ON DELETE SET NULL,
+    goal TEXT NOT NULL DEFAULT '',
+    state_json TEXT NOT NULL DEFAULT '[]',
+    source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, entity_id)
+);
+
+CREATE TABLE IF NOT EXISTS open_threads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    thread_key TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    opened_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    resolved_event_id INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, thread_key)
+);
+
+CREATE TABLE IF NOT EXISTS arc_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    arc_key TEXT NOT NULL,
+    start_segment INTEGER NOT NULL,
+    end_segment INTEGER NOT NULL,
+    summary TEXT NOT NULL,
+    event_ids_json TEXT NOT NULL DEFAULT '[]',
+    source_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT 'local',
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, arc_key, source_hash)
+);
+
+CREATE TABLE IF NOT EXISTS concepts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    scheme TEXT NOT NULL DEFAULT 'book',
+    category TEXT NOT NULL,
+    preferred_label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    custom INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_by TEXT NOT NULL DEFAULT 'migration',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, scheme, category, preferred_label)
+);
+
+CREATE TABLE IF NOT EXISTS concept_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    source_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    target_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    relation TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT 'migration',
+    UNIQUE(book_id, source_concept_id, target_concept_id, relation)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+    subject_type TEXT NOT NULL,
+    subject_id INTEGER NOT NULL,
+    predicate TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    confidence REAL NOT NULL DEFAULT 0.5,
+    source_kind TEXT NOT NULL DEFAULT 'original_text',
+    created_by TEXT NOT NULL DEFAULT 'migration',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, subject_type, subject_id, predicate, value_json)
+);
+
+CREATE TABLE IF NOT EXISTS claim_qualifiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    knowledge_claim_id INTEGER NOT NULL REFERENCES knowledge_claims(id) ON DELETE CASCADE,
+    qualifier_key TEXT NOT NULL,
+    qualifier_value_json TEXT NOT NULL,
+    UNIQUE(knowledge_claim_id, qualifier_key, qualifier_value_json)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_claim_evidence (
+    knowledge_claim_id INTEGER NOT NULL REFERENCES knowledge_claims(id) ON DELETE CASCADE,
+    evidence_id INTEGER NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+    PRIMARY KEY(knowledge_claim_id, evidence_id)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL,
+    target_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    before_json TEXT NOT NULL DEFAULT '{}',
+    after_json TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS feature_flags (
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    feature_key TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(book_id, feature_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_segments_book ON segments(book_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_library_folders_parent ON library_folders(parent_id, sort_order, name);
 CREATE INDEX IF NOT EXISTS idx_book_updates_book ON book_update_batches(book_id, status, created_at);
@@ -788,6 +945,16 @@ CREATE INDEX IF NOT EXISTS idx_domain_rules_book ON domain_rules(book_id, task_k
 CREATE INDEX IF NOT EXISTS idx_external_facts_book ON external_facts(book_id, active);
 CREATE INDEX IF NOT EXISTS idx_run_manifests_book ON run_manifests(book_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_model_races_book ON model_race_runs(book_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_map_layout_book ON map_layout_snapshots(book_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_narrative_frames_book ON event_narrative_frames(book_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_causal_links_book ON event_causal_links(book_id, source_event_id, target_event_id);
+CREATE INDEX IF NOT EXISTS idx_character_states_book ON character_states(book_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_open_threads_book ON open_threads(book_id, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_arc_memories_book ON arc_memories(book_id, start_segment, end_segment);
+CREATE INDEX IF NOT EXISTS idx_concepts_book ON concepts(book_id, category, preferred_label);
+CREATE INDEX IF NOT EXISTS idx_concept_relations_book ON concept_relations(book_id, source_concept_id, relation);
+CREATE INDEX IF NOT EXISTS idx_knowledge_claims_book ON knowledge_claims(book_id, concept_id, status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_revisions_target ON knowledge_revisions(book_id, target_type, target_id, created_at);
 """
 
 
@@ -811,6 +978,7 @@ def initialize(path: Path) -> None:
         _migrate_library_columns(connection)
         _migrate_quality_harness(connection)
         _migrate_control_plane(connection)
+        _migrate_v27(connection)
         _repair_derived_self_routes(connection)
         _repair_mismatched_evidence_segments(connection)
         connection.execute(
@@ -842,6 +1010,83 @@ def initialize(path: Path) -> None:
             WHERE status = 'quality_checking'
             """
         )
+
+
+def _migrate_v27(connection: sqlite3.Connection) -> None:
+    """无损建立 2.7 派生层；旧表继续作为一个版本周期内的兼容来源。"""
+
+    features = ("atlas_v2", "narrative_memory_v2", "knowledge_v2")
+    for book in connection.execute("SELECT id FROM books"):
+        book_id = int(book["id"])
+        for feature in features:
+            connection.execute(
+                "INSERT OR IGNORE INTO feature_flags(book_id, feature_key, enabled) VALUES (?, ?, 1)",
+                (book_id, feature),
+            )
+
+    # 旧事件至少保留一个可读行动；未抽取到的前因、目标和结果保持为空。
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO event_narrative_frames(event_id, book_id, action, created_by)
+        SELECT id, book_id, summary, 'legacy_migration' FROM events
+        """
+    )
+
+    # 旧世界卡与条目先迁入概念层，再逐条建立带来源边界的原子说明。
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO concepts(
+            book_id, category, preferred_label, description, custom, created_by
+        )
+        SELECT book_id, category, title, summary, 0, 'world_note_migration'
+        FROM world_notes
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO concepts(
+            book_id, category, preferred_label, description, custom, created_by
+        )
+        SELECT book_id, category, name, summary, 0, 'entry_migration'
+        FROM entries
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO knowledge_claims(
+            book_id, concept_id, subject_type, subject_id, predicate, value_json,
+            status, confidence, source_kind, created_by
+        )
+        SELECT w.book_id, c.id, 'world_note', w.id, 'summary', json_quote(w.summary),
+            CASE WHEN w.archived_at IS NULL THEN 'accepted' ELSE 'deprecated' END,
+            w.confidence, 'original_text', 'world_note_migration'
+        FROM world_notes w
+        JOIN concepts c ON c.book_id = w.book_id AND c.category = w.category
+            AND c.preferred_label = w.title
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO knowledge_claims(
+            book_id, concept_id, subject_type, subject_id, predicate, value_json,
+            status, confidence, source_kind, created_by
+        )
+        SELECT e.book_id, c.id, 'entry', e.id, 'summary', json_quote(e.summary),
+            'accepted', e.confidence, 'original_text', 'entry_migration'
+        FROM entries e
+        JOIN concepts c ON c.book_id = e.book_id AND c.category = e.category
+            AND c.preferred_label = e.name
+        """
+    )
+    connection.execute(
+        """
+        INSERT OR IGNORE INTO knowledge_claim_evidence(knowledge_claim_id, evidence_id)
+        SELECT k.id, ev.id
+        FROM knowledge_claims k
+        JOIN evidence ev ON ev.book_id = k.book_id
+            AND ev.target_type = k.subject_type AND ev.target_id = k.subject_id
+        """
+    )
 
 
 def _repair_derived_self_routes(connection: sqlite3.Connection) -> None:

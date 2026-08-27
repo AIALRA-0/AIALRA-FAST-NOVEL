@@ -9,6 +9,8 @@ from app.consolidation import consolidate_book, merge_entities
 from app.models import (
     EntityCandidate,
     EventCandidate,
+    EventCausalReferenceCandidate,
+    EventNarrativeFrameCandidate,
     ExtractionResult,
     JourneyLegCandidate,
     ParticipantCandidate,
@@ -118,6 +120,65 @@ def test_persists_entity_event_and_evidence(tmp_path: Path) -> None:
     assert event["narrative_order"] == 0
     # 地点同时保留名称证据和事件场景证据，便于之后审查位置绑定。
     assert evidence_count == 4
+
+
+def test_narrative_frame_requires_exact_evidence_and_keeps_explicit_causality(tmp_path: Path) -> None:
+    """叙事承接字段必须有逐字证据，单独核验通过的因果边才可保存。"""
+
+    path = tmp_path / "narrative-frame.db"
+    initialize(path)
+    text = "陆昭收到求救信。因为求救信写明雾港被围，陆昭立即赶往雾港，决定先救出港民。"
+    with transaction(path) as connection:
+        book_id = int(connection.execute(
+            "INSERT INTO books(title, source_type, source_hash, original_filename, segment_count, character_count) VALUES ('因果', 'txt', 'narrative-frame', 'frame.txt', 1, ?)",
+            (len(text),),
+        ).lastrowid)
+        segment_id = int(connection.execute(
+            "INSERT INTO segments(book_id, ordinal, chapter_title, anchor, text, char_start, char_end) VALUES (?, 0, '第一章', 'frame-0', ?, 0, ?)",
+            (book_id, text, len(text)),
+        ).lastrowid)
+        segment = connection.execute("SELECT * FROM segments WHERE id = ?", (segment_id,)).fetchone()
+        extraction = ExtractionResult(events=[
+            EventCandidate(
+                title="收到求救信", summary="陆昭收到求救信。", narrative_order=0,
+                temporal_kind="unknown", confidence=0.95, evidence_quote="陆昭收到求救信。",
+            ),
+            EventCandidate(
+                title="赶往雾港", summary="陆昭因雾港被围而赶去救人。", narrative_order=1,
+                temporal_kind="unknown", confidence=0.96,
+                evidence_quote="因为求救信写明雾港被围，陆昭立即赶往雾港，决定先救出港民。",
+                narrative_frame=EventNarrativeFrameCandidate(
+                    cause="求救信写明雾港被围", goal="先救出港民", action="立即赶往雾港",
+                    open_threads=["能否救出港民"],
+                    evidence_quotes=["求救信写明雾港被围", "决定先救出港民"],
+                    causal_references=[EventCausalReferenceCandidate(
+                        target_event="收到求救信", relation="motivates", evidence_quote="因为求救信写明雾港被围",
+                    )],
+                ),
+            ),
+            EventCandidate(
+                title="未经支持的推断", summary="陆昭收到求救信。", narrative_order=2,
+                temporal_kind="unknown", confidence=0.5, evidence_quote="陆昭收到求救信。",
+                narrative_frame=EventNarrativeFrameCandidate(
+                    cause="陆昭想成为英雄", action="收到求救信",
+                    evidence_quotes=["原文不存在的心理"],
+                ),
+            ),
+        ])
+        stats = persist_extraction(connection, book_id, segment, extraction)
+        frames = connection.execute(
+            "SELECT event.title, frame.cause, frame.goal, frame.action, frame.open_threads_json FROM event_narrative_frames frame JOIN events event ON event.id = frame.event_id ORDER BY event.narrative_order"
+        ).fetchall()
+        causal = connection.execute("SELECT relation, evidence_json FROM event_causal_links").fetchall()
+    supported = next(row for row in frames if row["title"] == "赶往雾港")
+    unsupported = next(row for row in frames if row["title"] == "未经支持的推断")
+    assert supported["cause"] == "求救信写明雾港被围"
+    assert supported["goal"] == "先救出港民"
+    assert "能否救出港民" in supported["open_threads_json"]
+    assert unsupported["cause"] == ""
+    assert unsupported["action"] == "陆昭收到求救信。"
+    assert causal[0]["relation"] == "motivates"
+    assert stats.rejected_without_evidence >= 2
 
 
 def test_alias_in_later_segment_reuses_existing_entity(tmp_path: Path) -> None:

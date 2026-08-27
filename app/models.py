@@ -57,6 +57,29 @@ class ParticipantCandidate(StrictModel):
     role: str = Field(min_length=1, max_length=80)
 
 
+class EventCausalReferenceCandidate(StrictModel):
+    """当前事件与既有事件之间、由本段原文直接支持的因果关系。"""
+
+    target_event: str = Field(min_length=1, max_length=160)
+    relation: Literal["causes", "enables", "motivates", "resolves", "contradicts"]
+    evidence_quote: str = Field(min_length=1, max_length=800)
+
+
+class EventNarrativeFrameCandidate(StrictModel):
+    """为连贯摘要保留因果、状态和未闭合线索，不允许用模型常识补齐。"""
+
+    cause: str = Field(default="", max_length=500)
+    trigger: str = Field(default="", max_length=500)
+    goal: str = Field(default="", max_length=500)
+    action: str = Field(default="", max_length=800)
+    outcome: str = Field(default="", max_length=800)
+    state_changes: list[str] = Field(default_factory=list, max_length=12)
+    open_threads: list[str] = Field(default_factory=list, max_length=12)
+    resolved_threads: list[str] = Field(default_factory=list, max_length=12)
+    evidence_quotes: list[str] = Field(default_factory=list, max_length=12)
+    causal_references: list[EventCausalReferenceCandidate] = Field(default_factory=list, max_length=12)
+
+
 class EventCandidate(StrictModel):
     """区分叙事顺序与故事时间的事件候选。"""
 
@@ -74,6 +97,7 @@ class EventCandidate(StrictModel):
     participants: list[ParticipantCandidate] = Field(default_factory=list, max_length=30)
     reference_event: str | None = Field(default=None, max_length=160)
     relation_to_reference: Literal["before", "after", "during", "same", "unknown"] = "unknown"
+    narrative_frame: EventNarrativeFrameCandidate = Field(default_factory=EventNarrativeFrameCandidate)
     confidence: float = Field(ge=0, le=1)
     evidence_quote: str = Field(min_length=1, max_length=800)
 
@@ -221,6 +245,51 @@ class WorldNoteCreate(BaseModel):
     category: Literal["power", "faction", "background", "rule", "geography", "culture", "other"]
     title: str = Field(min_length=1, max_length=160)
     summary: str = Field(min_length=1, max_length=5_000)
+
+
+class ConceptCreate(BaseModel):
+    """创建每本书独立的知识概念、分类或文件夹。"""
+
+    category: str = Field(min_length=1, max_length=80)
+    preferred_label: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=5_000)
+    aliases: list[str] = Field(default_factory=list, max_length=40)
+    parent_concept_id: int | None = Field(default=None, gt=0)
+    scheme: Literal["book", "custom"] = "custom"
+
+
+class ConceptPatch(BaseModel):
+    """修改概念名称、说明、别名、分类或归档状态。"""
+
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    preferred_label: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=5_000)
+    aliases: list[str] | None = Field(default=None, max_length=40)
+    status: Literal["active", "archived", "needs_classification"] | None = None
+    parent_concept_id: int | None = Field(default=None, gt=0)
+    move_to_root: bool = False
+
+
+class KnowledgeClaimCreate(BaseModel):
+    """在概念下建立一条带原文证据或明确外部来源的原子事实。"""
+
+    concept_id: int = Field(gt=0)
+    predicate: str = Field(min_length=1, max_length=120)
+    value: Any
+    source_kind: Literal["original_text", "external_fact", "human_note"] = "human_note"
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    segment_id: int | None = Field(default=None, gt=0)
+    evidence_quote: str = Field(default="", max_length=800)
+    qualifiers: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeClaimPatch(BaseModel):
+    """修改原子事实状态、值、限定条件或置信度。"""
+
+    value: Any | None = None
+    status: Literal["accepted", "parallel", "deprecated", "needs_resolution"] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    qualifiers: dict[str, Any] | None = None
 
 
 class ConnectivityReviewPatch(BaseModel):

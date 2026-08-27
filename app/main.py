@@ -7,6 +7,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 from difflib import unified_diff
 from contextlib import asynccontextmanager
@@ -38,6 +39,16 @@ from app.cost_control import estimate_segment_tokens, request_hash
 from app.db import connect, initialize, transaction
 from app.importers import ImportErrorDetail, parse_book
 from app.consolidation import build_analysis_context, consolidate_book, register_entity_keys
+from app.atlas import build_map_layout_snapshot
+from app.knowledge import (
+    concept_payload,
+    facet_payload,
+    knowledge_claim_payload,
+    record_revision,
+    revision_payload,
+    sync_knowledge_projection,
+)
+from app.narrative import narrative_memory_payload
 from app.jobs import (
     PROMPT_VERSION,
     AnalysisJobManager,
@@ -66,6 +77,8 @@ from app.models import (
     ClaimPatch,
     ConnectivityLinkCreate,
     ConnectivityReviewPatch,
+    ConceptCreate,
+    ConceptPatch,
     ContradictionPatch,
     EventLocationReviewPatch,
     ExternalFactCreate,
@@ -75,6 +88,8 @@ from app.models import (
     ModelRaceRequest,
     ModelRoutePatch,
     LibraryFolderRequest,
+    KnowledgeClaimCreate,
+    KnowledgeClaimPatch,
     ProviderKeyRequest,
     PromptDraftCreate,
     PromptTrialRequest,
@@ -109,6 +124,7 @@ ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 STATIC_DIR = ROOT / "static"
 settings: Settings = load_settings()
 job_manager: AnalysisJobManager | None = None
+derived_view_lock = threading.RLock()
 if not settings.database_path.is_absolute():
     settings = Settings(
         **{**settings.__dict__, "database_path": ROOT / settings.database_path}
@@ -165,7 +181,7 @@ async def lifespan(_: FastAPI):
         job_manager = None
 
 
-app = FastAPI(title="小说证据图谱", version="2.6.0", lifespan=lifespan)
+app = FastAPI(title="小说证据图谱", version="2.7.0", lifespan=lifespan)
 
 
 def rows(items: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -3608,11 +3624,349 @@ def backup_database() -> FileResponse:
     )
 
 
+@app.get("/api/books/{book_id}/map-layout")
+def map_layout(
+    book_id: int,
+    through_segment: int | None = Query(default=None, ge=0),
+) -> dict[str, Any]:
+    """返回基于证据约束和稳定拓扑的 2D/3D 共用布局。"""
+
+    with derived_view_lock:
+        with transaction(settings.database_path) as connection:
+            ensure_book(connection, book_id)
+            if through_segment is not None:
+                book = ensure_book(connection, book_id)
+                through_segment = min(through_segment, max(0, int(book["segment_count"]) - 1))
+            return build_map_layout_snapshot(connection, book_id, through_segment)
+
+
+@app.get("/api/books/{book_id}/narrative-memory")
+def narrative_memory(
+    book_id: int,
+    through_segment: int | None = Query(default=None, ge=0),
+) -> dict[str, Any]:
+    """返回最近场景、人物状态、未闭合线索、故事弧和因果边。"""
+
+    with derived_view_lock:
+        with transaction(settings.database_path) as connection:
+            ensure_book(connection, book_id)
+            if through_segment is not None:
+                book = ensure_book(connection, book_id)
+                through_segment = min(through_segment, max(0, int(book["segment_count"]) - 1))
+            return narrative_memory_payload(connection, book_id, through_segment)
+
+
+@app.get("/api/books/{book_id}/concepts")
+def concepts(
+    book_id: int,
+    q: str = Query(default="", max_length=120),
+    category: str = Query(default="", max_length=80),
+    status: str = Query(default="active", max_length=40),
+    limit: int = Query(default=200, ge=1, le=1_000),
+) -> list[dict[str, Any]]:
+    """按名称、别名、说明、分类和状态检索知识概念。"""
+
+    with derived_view_lock:
+        with transaction(settings.database_path) as connection:
+            ensure_book(connection, book_id)
+            return concept_payload(connection, book_id, query=q, category=category, status=status, limit=limit)
+
+
+@app.post("/api/books/{book_id}/concepts")
+def create_concept(book_id: int, request: ConceptCreate) -> dict[str, Any]:
+    """创建书内概念或自定义分类，并可挂到现有上位概念。"""
+
+    with transaction(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        if request.parent_concept_id is not None:
+            parent = connection.execute(
+                "SELECT id FROM concepts WHERE id = ? AND book_id = ? AND status != 'archived'",
+                (request.parent_concept_id, book_id),
+            ).fetchone()
+            if parent is None:
+                raise HTTPException(status_code=422, detail="上位概念不属于当前书籍或已经归档。")
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO concepts(
+                    book_id, scheme, category, preferred_label, description,
+                    aliases_json, custom, status, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, 'active', 'human')
+                """,
+                (
+                    book_id, request.scheme, request.category, request.preferred_label,
+                    request.description, json.dumps(request.aliases, ensure_ascii=False),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="同一分类中已经存在同名概念。") from exc
+        concept_id = int(cursor.lastrowid)
+        if request.parent_concept_id is not None:
+            connection.execute(
+                """
+                INSERT INTO concept_relations(
+                    book_id, source_concept_id, target_concept_id, relation, created_by
+                ) VALUES (?, ?, ?, 'broader', 'human')
+                """,
+                (book_id, concept_id, request.parent_concept_id),
+            )
+        created = next(
+            item for item in concept_payload(connection, book_id, status="", limit=1_000)
+            if int(item["id"]) == concept_id
+        )
+        record_revision(connection, book_id, "concept", concept_id, "created", {}, created)
+        return created
+
+
+@app.patch("/api/concepts/{concept_id}")
+def patch_concept(concept_id: int, patch: ConceptPatch) -> dict[str, Any]:
+    """修改概念并保留其事实、证据和关联记录。"""
+
+    with transaction(settings.database_path) as connection:
+        concept = connection.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
+        if concept is None:
+            raise HTTPException(status_code=404, detail="找不到知识概念。")
+        updates = {
+            "category": patch.category,
+            "preferred_label": patch.preferred_label,
+            "description": patch.description,
+            "status": patch.status,
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for field, value in updates.items():
+            if value is not None:
+                assignments.append(f"{field} = ?")
+                values.append(value)
+        if patch.aliases is not None:
+            assignments.append("aliases_json = ?")
+            values.append(json.dumps(patch.aliases, ensure_ascii=False))
+        if assignments:
+            try:
+                connection.execute(
+                    f"UPDATE concepts SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # noqa: S608
+                    (*values, concept_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise HTTPException(status_code=409, detail="修改后会与现有概念重名。") from exc
+        if patch.move_to_root or patch.parent_concept_id is not None:
+            connection.execute(
+                "DELETE FROM concept_relations WHERE source_concept_id = ? AND relation = 'broader'",
+                (concept_id,),
+            )
+        if patch.parent_concept_id is not None:
+            parent = connection.execute(
+                "SELECT id FROM concepts WHERE id = ? AND book_id = ? AND id != ? AND status != 'archived'",
+                (patch.parent_concept_id, concept["book_id"], concept_id),
+            ).fetchone()
+            if parent is None:
+                raise HTTPException(status_code=422, detail="上位概念无效。")
+            connection.execute(
+                """
+                INSERT INTO concept_relations(
+                    book_id, source_concept_id, target_concept_id, relation, created_by
+                ) VALUES (?, ?, ?, 'broader', 'human')
+                """,
+                (concept["book_id"], concept_id, patch.parent_concept_id),
+            )
+        updated = next(
+            item for item in concept_payload(connection, int(concept["book_id"]), status="", limit=1_000)
+            if int(item["id"]) == concept_id
+        )
+        record_revision(
+            connection, int(concept["book_id"]), "concept", concept_id,
+            "updated", dict(concept), updated,
+        )
+        return updated
+
+
+@app.delete("/api/concepts/{concept_id}")
+def archive_concept(concept_id: int) -> dict[str, Any]:
+    """归档概念而不删除事实、证据和修改历史。"""
+
+    with transaction(settings.database_path) as connection:
+        concept = connection.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
+        if concept is None:
+            raise HTTPException(status_code=404, detail="找不到知识概念。")
+        connection.execute(
+            "UPDATE concepts SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (concept_id,),
+        )
+        record_revision(
+            connection, int(concept["book_id"]), "concept", concept_id,
+            "archived", dict(concept), {**dict(concept), "status": "archived"},
+        )
+    return {"id": concept_id, "status": "archived"}
+
+
+@app.get("/api/books/{book_id}/knowledge-claims")
+def knowledge_claims(book_id: int, concept_id: int | None = Query(default=None, gt=0)) -> list[dict[str, Any]]:
+    """返回知识概念下的原子事实、限定条件和证据数量。"""
+
+    with derived_view_lock:
+        with transaction(settings.database_path) as connection:
+            ensure_book(connection, book_id)
+            return knowledge_claim_payload(connection, book_id, concept_id)
+
+
+@app.post("/api/books/{book_id}/knowledge-claims")
+def create_knowledge_claim(book_id: int, request: KnowledgeClaimCreate) -> dict[str, Any]:
+    """创建原子事实；原文事实必须先通过逐字引文验证。"""
+
+    with transaction(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        concept = connection.execute(
+            "SELECT id FROM concepts WHERE id = ? AND book_id = ? AND status != 'archived'",
+            (request.concept_id, book_id),
+        ).fetchone()
+        if concept is None:
+            raise HTTPException(status_code=422, detail="概念不属于当前书籍或已经归档。")
+        segment = None
+        if request.source_kind == "original_text":
+            if request.segment_id is None or not request.evidence_quote:
+                raise HTTPException(status_code=422, detail="原文事实必须提供章节和逐字引文。")
+            segment = connection.execute(
+                "SELECT * FROM segments WHERE id = ? AND book_id = ?",
+                (request.segment_id, book_id),
+            ).fetchone()
+            if segment is None or find_quote(str(segment["text"]), request.evidence_quote) is None:
+                raise HTTPException(status_code=422, detail="引文无法在当前书籍的指定章节逐字找到。")
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_claims(
+                    book_id, concept_id, subject_type, subject_id, predicate, value_json,
+                    status, confidence, source_kind, created_by
+                ) VALUES (?, ?, 'concept', ?, ?, ?, 'accepted', ?, ?, 'human')
+                """,
+                (
+                    book_id, request.concept_id, request.concept_id, request.predicate,
+                    json.dumps(request.value, ensure_ascii=False), request.confidence, request.source_kind,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="完全相同的事实已经存在。") from exc
+        claim_id = int(cursor.lastrowid)
+        for key, value in request.qualifiers.items():
+            connection.execute(
+                "INSERT INTO claim_qualifiers(knowledge_claim_id, qualifier_key, qualifier_value_json) VALUES (?, ?, ?)",
+                (claim_id, str(key), json.dumps(value, ensure_ascii=False)),
+            )
+        if segment is not None and request.segment_id is not None:
+            add_evidence(
+                connection, book_id, "knowledge_claim", claim_id, request.segment_id,
+                str(segment["text"]), request.evidence_quote,
+            )
+            evidence = connection.execute(
+                """
+                SELECT id FROM evidence
+                WHERE target_type = 'knowledge_claim' AND target_id = ? AND segment_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (claim_id, request.segment_id),
+            ).fetchone()
+            if evidence is not None:
+                connection.execute(
+                    "INSERT OR IGNORE INTO knowledge_claim_evidence(knowledge_claim_id, evidence_id) VALUES (?, ?)",
+                    (claim_id, int(evidence["id"])),
+                )
+        created = next(item for item in knowledge_claim_payload(connection, book_id, request.concept_id) if int(item["id"]) == claim_id)
+        record_revision(connection, book_id, "knowledge_claim", claim_id, "created", {}, created)
+        return created
+
+
+@app.patch("/api/knowledge-claims/{claim_id}")
+def patch_knowledge_claim(claim_id: int, patch: KnowledgeClaimPatch) -> dict[str, Any]:
+    """修改事实值、状态、限定条件或置信度。"""
+
+    with transaction(settings.database_path) as connection:
+        claim = connection.execute("SELECT * FROM knowledge_claims WHERE id = ?", (claim_id,)).fetchone()
+        if claim is None:
+            raise HTTPException(status_code=404, detail="找不到知识事实。")
+        assignments: list[str] = []
+        values: list[Any] = []
+        if "value" in patch.model_fields_set:
+            assignments.append("value_json = ?")
+            values.append(json.dumps(patch.value, ensure_ascii=False))
+        if patch.status is not None:
+            assignments.append("status = ?")
+            values.append(patch.status)
+        if patch.confidence is not None:
+            assignments.append("confidence = ?")
+            values.append(patch.confidence)
+        if assignments:
+            connection.execute(
+                f"UPDATE knowledge_claims SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # noqa: S608
+                (*values, claim_id),
+            )
+        if patch.qualifiers is not None:
+            connection.execute("DELETE FROM claim_qualifiers WHERE knowledge_claim_id = ?", (claim_id,))
+            for key, value in patch.qualifiers.items():
+                connection.execute(
+                    "INSERT INTO claim_qualifiers(knowledge_claim_id, qualifier_key, qualifier_value_json) VALUES (?, ?, ?)",
+                    (claim_id, str(key), json.dumps(value, ensure_ascii=False)),
+                )
+        updated = next(item for item in knowledge_claim_payload(connection, int(claim["book_id"]), int(claim["concept_id"])) if int(item["id"]) == claim_id)
+        record_revision(
+            connection, int(claim["book_id"]), "knowledge_claim", claim_id,
+            "updated", dict(claim), updated,
+        )
+        return updated
+
+
+@app.delete("/api/knowledge-claims/{claim_id}")
+def deprecate_knowledge_claim(claim_id: int) -> dict[str, Any]:
+    """弃用事实但保留证据与历史，供冲突和版本追踪。"""
+
+    with transaction(settings.database_path) as connection:
+        claim = connection.execute("SELECT * FROM knowledge_claims WHERE id = ?", (claim_id,)).fetchone()
+        if claim is None:
+            raise HTTPException(status_code=404, detail="找不到知识事实。")
+        connection.execute(
+            "UPDATE knowledge_claims SET status = 'deprecated', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (claim_id,),
+        )
+        record_revision(
+            connection, int(claim["book_id"]), "knowledge_claim", claim_id,
+            "deprecated", dict(claim), {**dict(claim), "status": "deprecated"},
+        )
+    return {"id": claim_id, "status": "deprecated"}
+
+
+@app.get("/api/books/{book_id}/knowledge-facets")
+def knowledge_facets(book_id: int) -> dict[str, Any]:
+    """返回知识库分类、状态和证据覆盖统计。"""
+
+    with derived_view_lock:
+        with transaction(settings.database_path) as connection:
+            ensure_book(connection, book_id)
+            return facet_payload(connection, book_id)
+
+
+@app.get("/api/books/{book_id}/knowledge-revisions")
+def knowledge_revisions(
+    book_id: int,
+    target_type: str = Query(default="", max_length=40),
+    target_id: int | None = Query(default=None, gt=0),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    """返回概念和原子事实的人工修改记录。"""
+
+    if target_type and target_type not in {"concept", "knowledge_claim"}:
+        raise HTTPException(status_code=422, detail="不支持的知识修改记录类型。")
+    with connect(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        return revision_payload(connection, book_id, target_type, target_id, limit)
+
+
 @app.get("/api/evidence/{target_type}/{target_id}")
 def target_evidence(target_type: str, target_id: int) -> list[dict[str, Any]]:
     """返回事实的逐字引文、章节和稳定锚点。"""
 
-    allowed = {"entity", "claim", "place_relation", "event", "journey_leg", "world_note", "entry"}
+    allowed = {
+        "entity", "claim", "place_relation", "event", "journey_leg",
+        "world_note", "entry", "narrative_frame", "knowledge_claim",
+    }
     if target_type not in allowed:
         raise HTTPException(status_code=400, detail="未知证据类型。")
     with connect(settings.database_path) as connection:
@@ -3710,7 +4064,7 @@ def patch_claim(claim_id: int, patch: ClaimPatch) -> dict[str, Any]:
 def health() -> dict[str, str]:
     """供本机容器与反向代理检查进程状态，不返回书库或模型信息。"""
 
-    return {"status": "ok", "version": "2.6.0"}
+    return {"status": "ok", "version": "2.7.0"}
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -3719,7 +4073,7 @@ def ready() -> dict[str, str]:
 
     with connect(settings.database_path) as connection:
         connection.execute("SELECT 1").fetchone()
-    return {"status": "ready", "version": "2.6.0"}
+    return {"status": "ready", "version": "2.7.0"}
 
 
 @app.get("/")

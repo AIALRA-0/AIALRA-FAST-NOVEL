@@ -7,6 +7,8 @@ $pyproject = Get-Content -LiteralPath (Join-Path $projectRoot "pyproject.toml") 
 $index = Get-Content -LiteralPath (Join-Path $projectRoot "static/index.html") -Raw -Encoding UTF8
 $main = Get-Content -LiteralPath (Join-Path $projectRoot "app/main.py") -Raw -Encoding UTF8
 $appJs = Get-Content -LiteralPath (Join-Path $projectRoot "static/app.js") -Raw -Encoding UTF8
+$atlas = Get-Content -LiteralPath (Join-Path $projectRoot "app/atlas.py") -Raw -Encoding UTF8
+$models = Get-Content -LiteralPath (Join-Path $projectRoot "app/models.py") -Raw -Encoding UTF8
 
 $release = [Regex]::Escape([string]$state.release)
 $checks = [ordered]@{
@@ -18,6 +20,11 @@ $checks = [ordered]@{
     "3D map entry" = $appJs -match 'data-mode="3d"'
     "3D reuses directional coordinates" = $appJs -match "function createMapGraph3D\(" -and $appJs -match "mapContainmentDepths\("
     "view switch avoids model calls" = $appJs -match "novel-atlas-map-mode"
+    "no serpentine map fallback" = $appJs -notmatch "chronologySchematicLayout"
+    "semantic atlas endpoint" = $main -match '/api/books/{book_id}/map-layout' -and $atlas -match 'formal_geography"\s*:\s*False'
+    "narrative memory frame" = $models -match "class EventNarrativeFrameCandidate" -and $main -match '/api/books/{book_id}/narrative-memory'
+    "three-layer knowledge API" = $main -match '/api/books/{book_id}/concepts' -and $main -match '/api/books/{book_id}/knowledge-claims'
+    "knowledge revision history" = $main -match '/api/books/{book_id}/knowledge-revisions'
 }
 
 $failed = @($checks.GetEnumerator() | Where-Object { -not $_.Value })
@@ -28,4 +35,4 @@ $checks.GetEnumerator() | ForEach-Object {
 if ($failed.Count -gt 0) {
     throw "Current-state check failed: $($failed.Key -join ', ')"
 }
-Write-Output "Current state matches the 2.6.0 contract."
+Write-Output "Current state matches the $($state.release) contract."

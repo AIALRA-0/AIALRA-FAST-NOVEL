@@ -329,6 +329,7 @@ def persist_extraction(
             accepted += 1
 
     pending_event_edges: list[tuple[int, str, str, float]] = []
+    pending_causal_edges: list[tuple[int, str, str, float, str]] = []
     for candidate in extraction.events:
         quote_location = find_quote(segment["text"], candidate.evidence_quote)
         if quote_location is None:
@@ -371,6 +372,57 @@ def persist_extraction(
             continue
         event_id = int(event["id"])
         add_evidence(connection, book_id, "event", event_id, segment["id"], segment["text"], candidate.evidence_quote)
+        frame = candidate.narrative_frame
+        verified_frame_quotes = [
+            quote for quote in frame.evidence_quotes
+            if find_quote(segment["text"], quote) is not None
+        ]
+        if frame.evidence_quotes and len(verified_frame_quotes) != len(frame.evidence_quotes):
+            rejected += len(frame.evidence_quotes) - len(verified_frame_quotes)
+        frame_has_content = any([
+            frame.cause, frame.trigger, frame.goal, frame.action, frame.outcome,
+            frame.state_changes, frame.open_threads, frame.resolved_threads,
+        ])
+        frame_supported = bool(verified_frame_quotes) and len(verified_frame_quotes) == len(frame.evidence_quotes)
+        if frame_has_content and not frame_supported:
+            rejected += 1
+        connection.execute(
+            """
+            INSERT INTO event_narrative_frames(
+                event_id, book_id, cause, trigger_text, goal, action, outcome,
+                state_changes_json, open_threads_json, resolved_threads_json, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'model')
+            ON CONFLICT(event_id) DO UPDATE SET
+                cause = excluded.cause,
+                trigger_text = excluded.trigger_text,
+                goal = excluded.goal,
+                action = excluded.action,
+                outcome = excluded.outcome,
+                state_changes_json = excluded.state_changes_json,
+                open_threads_json = excluded.open_threads_json,
+                resolved_threads_json = excluded.resolved_threads_json,
+                created_by = excluded.created_by,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                event_id, book_id, frame.cause if frame_supported else "",
+                frame.trigger if frame_supported else "", frame.goal if frame_supported else "",
+                (frame.action if frame_supported else "") or candidate.summary,
+                frame.outcome if frame_supported else "",
+                json.dumps(frame.state_changes if frame_supported else [], ensure_ascii=False),
+                json.dumps(frame.open_threads if frame_supported else [], ensure_ascii=False),
+                json.dumps(frame.resolved_threads if frame_supported else [], ensure_ascii=False),
+            ),
+        )
+        for quote in verified_frame_quotes if frame_supported else []:
+            add_evidence(connection, book_id, "narrative_frame", event_id, segment["id"], segment["text"], quote)
+        for reference in frame.causal_references:
+            if find_quote(segment["text"], reference.evidence_quote) is not None:
+                pending_causal_edges.append(
+                    (event_id, reference.target_event, reference.relation, candidate.confidence, reference.evidence_quote)
+                )
+            else:
+                rejected += 1
         for participant in candidate.participants:
             participant_id = entity_ids.get(participant.name)
             if participant_id is not None:
@@ -403,6 +455,29 @@ def persist_extraction(
             ) VALUES (?, ?, ?, ?, ?, 'model')
             """,
             (book_id, earlier_id, later_id, relation, confidence),
+        )
+
+    for source_event_id, target_title, relation, confidence, quote in pending_causal_edges:
+        target = connection.execute(
+            """
+            SELECT id FROM events WHERE book_id = ? AND title = ? AND id != ?
+            ORDER BY story_order DESC, id DESC LIMIT 1
+            """,
+            (book_id, target_title, source_event_id),
+        ).fetchone()
+        if target is None:
+            continue
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO event_causal_links(
+                book_id, source_event_id, target_event_id, relation, confidence,
+                evidence_json, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, 'model')
+            """,
+            (
+                book_id, source_event_id, int(target["id"]), relation, confidence,
+                json.dumps([quote], ensure_ascii=False),
+            ),
         )
 
     # 行程与普通事件分开保存；人物、起点和终点都必须能落到已有实体。

@@ -35,7 +35,7 @@ from app.quality_harness import run_quality_harness
 from app.review import GLOBAL_REVIEW_VERSION, review_book
 
 
-PROMPT_VERSION = "extract-v5-scene-location-topology"
+PROMPT_VERSION = "extract-v6-causal-memory-atlas"
 ACTIVE_STATUSES = {"queued", "running", "paused"}
 
 

@@ -27,10 +27,10 @@ def test_health_and_readiness_endpoints(tmp_path: Path) -> None:
 
     with client_for(tmp_path) as client:
         health = client.get("/healthz").json()
-        assert health == {"status": "ok", "version": "2.6.0"}
+        assert health == {"status": "ok", "version": "2.7.0"}
         readiness = client.get("/readyz")
         assert readiness.status_code == 200
-        assert readiness.json() == {"status": "ready", "version": "2.6.0"}
+        assert readiness.json() == {"status": "ready", "version": "2.7.0"}
 
 
 def test_demo_overview_respects_spoiler_boundary(tmp_path: Path) -> None:
@@ -115,6 +115,107 @@ def test_large_demo_exercises_graph_timeline_and_journey(tmp_path: Path) -> None
         radii = [((x - 50) ** 2 + (y - 50) ** 2) ** 0.5 for x, y in place_points]
         assert max(radii) - min(radii) > 10
         assert overview["quality"]["evidence_coverage_percent"] == 100.0
+
+
+def test_v27_atlas_narrative_and_knowledge_endpoints_share_existing_facts(tmp_path: Path) -> None:
+    """2.7 派生层必须复用原有地点、事件和证据，不生成第二套故事。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        overview = client.get(f"/api/books/{book_id}/overview?through_segment=4").json()
+        atlas = client.get(f"/api/books/{book_id}/map-layout").json()
+        repeated = client.get(f"/api/books/{book_id}/map-layout").json()
+        assert atlas["source_hash"] == repeated["source_hash"]
+        assert atlas["nodes"] == repeated["nodes"]
+        assert atlas["fact_source"] == "overview.story_map_steps"
+        assert {item["id"] for item in atlas["nodes"]} == {
+            item["id"] for item in overview["entities"] if item["kind"] == "place"
+        }
+        assert all(item["coordinate_source"] in {"directional_evidence", "stable_topology_projection"} for item in atlas["nodes"])
+
+        memory = client.get(f"/api/books/{book_id}/narrative-memory").json()
+        assert memory["generation_policy"] == "local_first_cached_arc_review"
+        assert [item["id"] for item in memory["recent_scenes"]] == [item["id"] for item in overview["events"]]
+        assert all(item["narrative_text"] for item in memory["recent_scenes"])
+
+        facets = client.get(f"/api/books/{book_id}/knowledge-facets").json()
+        concepts = client.get(f"/api/books/{book_id}/concepts", params={"status": "", "limit": 1000}).json()
+        assert facets["concept_count"] > 0
+        assert any(item["scheme"] == "book" for item in concepts)
+        assert all("evidence_count" in item for item in concepts)
+
+
+def test_v27_derived_views_share_spoiler_boundary(tmp_path: Path) -> None:
+    """地图和叙事记忆不能比总览提前暴露后文地点、事件或人物状态。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if "120章" in book["title"])
+        boundary = 3
+        overview = client.get(f"/api/books/{book_id}/overview", params={"through_segment": boundary}).json()
+        atlas = client.get(f"/api/books/{book_id}/map-layout", params={"through_segment": boundary}).json()
+        memory = client.get(f"/api/books/{book_id}/narrative-memory", params={"through_segment": boundary}).json()
+        visible_places = {item["id"] for item in overview["entities"] if item["kind"] == "place"}
+        visible_events = {item["id"] for item in overview["events"]}
+        assert atlas["through_segment"] == boundary
+        assert {item["id"] for item in atlas["nodes"]} == visible_places
+        assert memory["through_segment"] == boundary
+        assert {item["id"] for item in memory["recent_scenes"]} == visible_events
+        assert all(item["source_event_ids"] and set(item["source_event_ids"]) <= visible_events for item in memory["character_states"])
+
+
+def test_v27_large_world_is_split_into_non_geographic_semantic_regions(tmp_path: Path) -> None:
+    """大型连通地图应形成多个语义片区，同时明确它们不是正式地理边界。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if "120章" in book["title"])
+        atlas = client.get(f"/api/books/{book_id}/map-layout", params={"through_segment": 119}).json()
+        assert len(atlas["regions"]) >= 3
+        assert all(item["formal_geography"] is False for item in atlas["regions"])
+        assert all(item["kind"] == "topological_cluster" for item in atlas["regions"])
+
+
+def test_v27_knowledge_crud_requires_exact_quote_for_original_fact(tmp_path: Path) -> None:
+    """人工知识可以编辑，标成原文事实时必须逐字命中同书章节。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        created = client.post(
+            f"/api/books/{book_id}/concepts",
+            json={"category": "term", "preferred_label": "测试概念", "description": "人工测试", "aliases": ["测试别名"], "scheme": "custom"},
+        )
+        assert created.status_code == 200
+        concept = created.json()
+        segment_id = client.get(f"/api/books/{book_id}/overview?through_segment=4").json()["segments"][0]["id"]
+        source = client.get(f"/api/segments/{segment_id}").json()
+        quote = source["text"][: min(12, len(source["text"]))]
+        rejected = client.post(
+            f"/api/books/{book_id}/knowledge-claims",
+            json={"concept_id": concept["id"], "predicate": "错误引文", "value": "不保存", "source_kind": "original_text", "segment_id": segment_id, "evidence_quote": "原文中不存在的句子"},
+        )
+        assert rejected.status_code == 422
+        accepted = client.post(
+            f"/api/books/{book_id}/knowledge-claims",
+            json={"concept_id": concept["id"], "predicate": "说明", "value": "有证据", "source_kind": "original_text", "segment_id": segment_id, "evidence_quote": quote, "qualifiers": {"阶段": "当前"}},
+        )
+        assert accepted.status_code == 200
+        claim = accepted.json()
+        assert claim["evidence_count"] == 1
+        assert claim["qualifiers"] == {"阶段": "当前"}
+        updated = client.patch(f"/api/knowledge-claims/{claim['id']}", json={"status": "parallel", "value": "并列保留"})
+        assert updated.status_code == 200
+        assert updated.json()["status"] == "parallel"
+        claim_revisions = client.get(
+            f"/api/books/{book_id}/knowledge-revisions",
+            params={"target_type": "knowledge_claim", "target_id": claim["id"]},
+        ).json()
+        assert [item["action"] for item in claim_revisions] == ["updated", "created"]
+        archived = client.delete(f"/api/concepts/{concept['id']}")
+        assert archived.json()["status"] == "archived"
+        concept_revisions = client.get(
+            f"/api/books/{book_id}/knowledge-revisions",
+            params={"target_type": "concept", "target_id": concept["id"]},
+        ).json()
+        assert [item["action"] for item in concept_revisions] == ["archived", "created"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="本机凭据存储使用 Windows DPAPI")

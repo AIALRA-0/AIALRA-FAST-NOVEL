@@ -19,7 +19,12 @@ if (-not (Test-Path -LiteralPath $buildPython)) {
 & $buildPython -m pip install -e "."
 & $buildPython -m pip install "pyinstaller>=6.10"
 
-$release = "2.6.0"
+$projectMetadata = Get-Content -LiteralPath (Join-Path $projectRoot "pyproject.toml") -Raw -Encoding UTF8
+$versionMatch = [Regex]::Match($projectMetadata, '(?m)^version\s*=\s*"([^"]+)"')
+if (-not $versionMatch.Success) {
+    throw "Cannot read the project version from pyproject.toml."
+}
+$release = $versionMatch.Groups[1].Value
 $distRoot = Join-Path $projectRoot "dist-v$release"
 $workRoot = Join-Path $projectRoot "build-v$release"
 & $buildPython -m PyInstaller --noconfirm --clean --onedir --windowed --name "NovelAtlasWindows" --distpath $distRoot --workpath $workRoot --add-data "static;static" --hidden-import "app.main" --exclude-module "PyQt5" --exclude-module "PyQt6" --exclude-module "PySide2" --exclude-module "PySide6" launcher.py

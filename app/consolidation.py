@@ -580,20 +580,69 @@ def recompute_chronology(connection: sqlite3.Connection, book_id: int) -> None:
 
 
 def update_book_memory(connection: sqlite3.Connection, book_id: int, through_segment: int) -> None:
-    """用已核验结构生成下一片段可用的紧凑前文记忆。"""
+    """用已核验结构生成因果、人物状态和未闭合线索组成的紧凑记忆。"""
 
     recent_events = connection.execute(
         """
-        SELECT title, summary, temporal_value FROM events
-        WHERE book_id = ? AND first_segment <= ? ORDER BY narrative_order DESC LIMIT 12
+        SELECT e.id, e.title, e.summary, e.temporal_value, e.location_entity_id,
+            f.cause, f.goal, f.action, f.outcome, f.state_changes_json,
+            f.open_threads_json, f.resolved_threads_json
+        FROM events e LEFT JOIN event_narrative_frames f ON f.event_id = e.id
+        WHERE e.book_id = ? AND e.first_segment <= ?
+        ORDER BY e.narrative_order DESC, e.id DESC LIMIT 16
         """,
         (book_id, through_segment),
     ).fetchall()
-    lines = [
-        f"{event['title']}：{event['summary']}；时间线索：{event['temporal_value'] or '未知'}"
+    event_lines = [
+        "｜".join(filter(None, (
+            str(event["title"]),
+            f"前因：{event['cause']}" if event["cause"] else "",
+            f"行动：{event['action'] or event['summary']}",
+            f"结果：{event['outcome']}" if event["outcome"] else "",
+            f"时间：{event['temporal_value'] or '未知'}",
+        )))
         for event in reversed(recent_events)
     ]
-    summary = "\n".join(lines)
+    state_lines = [
+        f"{row['name']}｜当前位置：{row['location_name'] or '未知'}｜目标：{row['goal'] or '未知'}｜状态：{row['state_changes'] or '无新增'}"
+        for row in connection.execute(
+            """
+            SELECT entity.name, place.name AS location_name,
+                COALESCE(frame.goal, '') AS goal,
+                COALESCE(frame.state_changes_json, '[]') AS state_changes
+            FROM event_participants participant
+            JOIN events event ON event.id = participant.event_id
+            JOIN entities entity ON entity.id = participant.entity_id
+            LEFT JOIN entities place ON place.id = event.location_entity_id
+            LEFT JOIN event_narrative_frames frame ON frame.event_id = event.id
+            WHERE event.book_id = ? AND event.first_segment <= ?
+              AND event.id = (
+                SELECT latest.id FROM events latest
+                JOIN event_participants latest_participant ON latest_participant.event_id = latest.id
+                WHERE latest.book_id = event.book_id
+                  AND latest.first_segment <= ?
+                  AND latest_participant.entity_id = participant.entity_id
+                ORDER BY latest.story_order DESC, latest.id DESC LIMIT 1
+              )
+            ORDER BY entity.importance DESC, entity.id LIMIT 24
+            """,
+            (book_id, through_segment, through_segment),
+        )
+    ]
+    open_threads: list[str] = []
+    resolved_threads: set[str] = set()
+    for event in recent_events:
+        try:
+            open_threads.extend(json.loads(event["open_threads_json"] or "[]"))
+            resolved_threads.update(json.loads(event["resolved_threads_json"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+    open_lines = [str(item) for item in dict.fromkeys(open_threads) if item not in resolved_threads][-20:]
+    summary = "\n".join([
+        "最近场景：", *(event_lines or ["暂无"]),
+        "人物状态：", *(state_lines or ["暂无"]),
+        "未闭合线索：", *(open_lines or ["暂无"]),
+    ])
     connection.execute(
         """
         INSERT INTO book_memory(book_id, through_segment, summary, updated_at)
@@ -645,15 +694,37 @@ def build_analysis_context(connection: sqlite3.Connection, book_id: int, ordinal
     ]
     recent_events = connection.execute(
         """
-        SELECT title, summary, temporal_value FROM events
-        WHERE book_id = ? AND first_segment < ?
-        ORDER BY first_segment DESC, narrative_order DESC, id DESC LIMIT 12
+        SELECT e.title, e.summary, e.temporal_value,
+            f.cause, f.goal, f.action, f.outcome, f.open_threads_json, f.resolved_threads_json
+        FROM events e LEFT JOIN event_narrative_frames f ON f.event_id = e.id
+        WHERE e.book_id = ? AND e.first_segment < ?
+        ORDER BY e.first_segment DESC, e.narrative_order DESC, e.id DESC LIMIT 16
         """,
         (book_id, ordinal),
     ).fetchall()
     event_lines = [
-        f"{event['title']}：{event['summary']}；时间线索：{event['temporal_value'] or '未知'}"
+        "｜".join(filter(None, (
+            str(event["title"]),
+            f"前因：{event['cause']}" if event["cause"] else "",
+            f"行动：{event['action'] or event['summary']}",
+            f"结果：{event['outcome']}" if event["outcome"] else "",
+            f"目标：{event['goal']}" if event["goal"] else "",
+            f"时间：{event['temporal_value'] or '未知'}",
+        )))
         for event in reversed(recent_events)
     ]
-    parts = ["已确认实体：", *(entity_lines or ["- 暂无"]), "最近事件：", *(event_lines or ["暂无"])]
+    open_threads: list[str] = []
+    resolved_threads: set[str] = set()
+    for event in reversed(recent_events):
+        try:
+            open_threads.extend(json.loads(event["open_threads_json"] or "[]"))
+            resolved_threads.update(json.loads(event["resolved_threads_json"] or "[]"))
+        except (TypeError, ValueError):
+            continue
+    unresolved = [str(item) for item in dict.fromkeys(open_threads) if item not in resolved_threads][-20:]
+    parts = [
+        "已确认实体：", *(entity_lines or ["- 暂无"]),
+        "最近因果场景：", *(event_lines or ["暂无"]),
+        "仍未解决的线索：", *(unresolved or ["暂无"]),
+    ]
     return "\n".join(parts)[:14_000]

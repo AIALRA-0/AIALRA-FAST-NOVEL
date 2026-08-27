@@ -19,6 +19,11 @@ const state = {
   relationshipHover: null,
   timelineMode: "story",
   mapMode: window.localStorage.getItem("novel-atlas-map-mode") === "3d" ? "3d" : "2d",
+  mapPresentation: window.localStorage.getItem("novel-atlas-map-presentation") === "evidence" ? "evidence" : "atlas",
+  mapLayout: null,
+  narrativeMemory: null,
+  knowledgeFacets: null,
+  concepts: [],
   mapStep: 0,
   mapTimer: null,
   mapPlaybackState: "idle",
@@ -84,6 +89,23 @@ const categoryLabels = {
   attribute: "属性",
   parameter: "参数",
   term: "术语",
+};
+
+const semanticPalette = {
+  person: "#0f6cbd",
+  place: "#4856a6",
+  faction: "#7a3e9d",
+  item: "#b46a00",
+  skill: "#d18400",
+  other: "#6b7280",
+  current: "#e66a00",
+  conflict: "#c42b1c",
+  unknown: "#7a7a76",
+  water: "#1976d2",
+  road: "#9a6700",
+  walk: "#795548",
+  flight: "#00838f",
+  teleport: "#7b1fa2",
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -246,15 +268,23 @@ async function loadOverview(throughSegment = null, silent = false) {
   const requestedBookId = state.bookId;
   if (!silent) $("#view-panel").innerHTML = '<div class="loading">正在整理证据与视图…</div>';
   const query = throughSegment === null ? "" : `?through_segment=${throughSegment}`;
-  const [overview, benchmarks, benchmarkCandidates] = await Promise.all([
+  const [overview, benchmarks, benchmarkCandidates, mapLayout, narrativeMemory, knowledgeFacets, concepts] = await Promise.all([
     api(`/api/books/${requestedBookId}/overview${query}`),
     api(`/api/books/${requestedBookId}/benchmarks`),
     api(`/api/books/${requestedBookId}/benchmark-candidates`),
+    api(`/api/books/${requestedBookId}/map-layout${query}`),
+    api(`/api/books/${requestedBookId}/narrative-memory${query}`),
+    api(`/api/books/${requestedBookId}/knowledge-facets`),
+    api(`/api/books/${requestedBookId}/concepts?status=&limit=1000`),
   ]);
   if (state.bookId !== requestedBookId) return;
   state.overview = overview;
   state.benchmarks = benchmarks;
   state.benchmarkCandidates = benchmarkCandidates;
+  state.mapLayout = mapLayout;
+  state.narrativeMemory = narrativeMemory;
+  state.knowledgeFacets = knowledgeFacets;
+  state.concepts = concepts;
   configureProgress();
   renderHeader();
   renderMetrics();
@@ -605,11 +635,11 @@ function createRelationshipGraph(entities, claims) {
     .nodeColor((node) => {
       const visibleIds = currentNodeIds();
       if (visibleIds && !visibleIds.has(node.id)) return "#dededa";
-      if (state.relationshipHover?.node?.id === node.id) return "#111111";
-      return node.kind === "faction" ? "#777773" : "#3b3b39";
+      if (state.relationshipHover?.node?.id === node.id) return semanticPalette.current;
+      return semanticPalette[node.kind] || semanticPalette.other;
     })
     .linkColor((link) => {
-      if (state.relationshipHover?.link === link) return "#111111";
+      if (state.relationshipHover?.link === link) return semanticPalette.current;
       const hoveredNode = state.relationshipHover?.node;
       if (hoveredNode) return linkedToHovered(link, hoveredNode.id) ? "#222222" : "#dededa";
       if (state.relationshipHover?.link) return "#dededa";
@@ -620,7 +650,7 @@ function createRelationshipGraph(entities, claims) {
     .linkCurvature((link) => link.curvature)
     .linkDirectionalArrowLength(3.1)
     .linkDirectionalArrowRelPos(0.76)
-    .linkDirectionalArrowColor((link) => state.relationshipHover?.link === link ? "#111111" : "#666663")
+    .linkDirectionalArrowColor((link) => state.relationshipHover?.link === link ? semanticPalette.current : "#666663")
     .linkHoverPrecision(3)
     .onNodeHover((node) => {
       state.relationshipHover = { node, link: null };
@@ -815,7 +845,7 @@ function createRelationshipGraph2D(entities, claims) {
         style: {
           width: "mapData(degree, 0, 16, 30, 54)",
           height: "mapData(degree, 0, 16, 30, 54)",
-          "background-color": "#2f7464",
+          "background-color": semanticPalette.person,
           "border-width": 4,
           "border-color": "#ffffff",
           label: "data(label)",
@@ -834,7 +864,7 @@ function createRelationshipGraph2D(entities, claims) {
           "overlay-opacity": 0,
         },
       },
-      { selector: "node[kind = 'faction']", style: { "background-color": "#d99b3e", shape: "round-rectangle" } },
+      { selector: "node[kind = 'faction']", style: { "background-color": semanticPalette.faction, shape: "round-rectangle" } },
       {
         selector: "edge",
         style: {
@@ -856,8 +886,8 @@ function createRelationshipGraph2D(entities, claims) {
         },
       },
       { selector: ".muted", style: { opacity: 0.09, "text-opacity": 0 } },
-      { selector: "node.focused", style: { "border-color": "#e6b25a", "border-width": 6, "z-index": 20 } },
-      { selector: "edge.focused", style: { opacity: 1, width: 3.2, "line-color": "#2f7464", "target-arrow-color": "#d17b20", label: "data(predicate)", "z-index": 18 } },
+      { selector: "node.focused", style: { "border-color": semanticPalette.current, "border-width": 6, "z-index": 20 } },
+      { selector: "edge.focused", style: { opacity: 1, width: 3.2, "line-color": semanticPalette.person, "target-arrow-color": semanticPalette.current, label: "data(predicate)", "z-index": 18 } },
     ],
   });
   state.relationshipCy = cy;
@@ -1029,6 +1059,11 @@ function storyMapSteps() {
   return state.overview?.story_map_steps || state.overview?.events || [];
 }
 
+function eventNarrativeText(event) {
+  const memory = state.narrativeMemory?.recent_scenes?.find((item) => Number(item.id) === Number(event?.id));
+  return memory?.narrative_text || event?.summary || "";
+}
+
 function renderTimeline() {
   const events = storyMapSteps();
   if (!events.length) {
@@ -1047,7 +1082,7 @@ function renderTimeline() {
     return `<article class="timeline-item">
       <div class="timeline-time">${escapeHtml(state.timelineMode === "story" ? event.temporal_value || "时间未知" : chapterForSegment(event.first_segment))}</div><div class="timeline-dot" aria-hidden="true"></div>
       <div class="timeline-card target-button" data-type="event" data-id="${event.id}" tabindex="0" role="button">
-        <h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(event.summary)}</p>
+        <h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p>
         <div class="chip-row">${event.location_name ? `<span class="chip blue">⌖ ${escapeHtml(event.location_name)}</span>` : ""}${participants ? `<span class="chip">${escapeHtml(participants)}</span>` : ""}${nonlinear ? `<span class="chip amber">${escapeHtml(phaseLabels[event.narrative_phase] || "非线性叙事")} · ${escapeHtml(chapterForSegment(event.first_segment))}</span>` : ""}<span class="chip">证据 ${event.evidence_count}</span><span class="chip">${state.timelineMode === "story" ? `编年第 ${displayIndex + 1} 位` : `原文第 ${displayIndex + 1} 位`}</span></div>
       </div>
     </article>`;
@@ -1055,7 +1090,10 @@ function renderTimeline() {
   const conflictCount = (state.overview.time_conflicts || []).length;
   const conflictNotice = conflictCount ? `<div class="timeline-warning">${conflictCount} 条互相冲突的时间约束已经隔离，没有参与当前排序。</div>` : "";
   const toolbar = `<div class="timeline-toolbar"><div class="segmented-control"><button class="timeline-mode${state.timelineMode === "story" ? " active" : ""}" data-mode="story" type="button">故事编年</button><button class="timeline-mode${state.timelineMode === "narrative" ? " active" : ""}" data-mode="narrative" type="button">原文顺序</button></div><span>两种顺序独立保存，回忆不会再冒充当前事件。</span></div>`;
-  $("#view-panel").innerHTML = panelHead("剧情编年史", "故事编年由无环时间约束计算，原文顺序只表示作者何时讲到这件事。") + toolbar + conflictNotice + `<div class="timeline">${cards}</div>`;
+  const openThreads = (state.narrativeMemory?.open_threads || []).filter((item) => item.status === "open").slice(0, 8);
+  const characterStates = (state.narrativeMemory?.character_states || []).filter((item) => item.goal || item.states?.length).slice(0, 8);
+  const memoryPanel = openThreads.length || characterStates.length ? `<details class="narrative-memory"><summary>当前承接记忆 · ${openThreads.length} 条未闭合线索</summary>${openThreads.length ? `<article><strong>尚未解决</strong><p>${openThreads.map((item) => escapeHtml(item.title)).join(" · ")}</p></article>` : ""}${characterStates.length ? `<article><strong>人物当前状态</strong><p>${characterStates.map((item) => `${escapeHtml(item.name)}：${escapeHtml(item.goal || item.states?.join("、") || "状态已记录")}${item.location_name ? `，位于${escapeHtml(item.location_name)}` : ""}`).join("<br>")}</p></article>` : ""}</details>` : "";
+  $("#view-panel").innerHTML = panelHead("剧情编年史", "故事编年由无环时间约束计算，原文顺序只表示作者何时讲到这件事。") + toolbar + conflictNotice + memoryPanel + `<div class="timeline">${cards}</div>`;
   $$(".timeline-mode").forEach((button) => button.addEventListener("click", () => {
     state.timelineMode = button.dataset.mode;
     renderTimeline();
@@ -1069,40 +1107,37 @@ const geographyLabels = {
   inside: "位于内部", contains: "包含", near: "邻近", upstream: "上游", downstream: "下游",
 };
 
-// 原文没有方位或坐标时，地图是编年路线示意，不是虚构地理图。
-// 按首次到达顺序使用蛇形线路布局，让相邻行程尽量相邻，并明确保留“拓扑示意”含义。
-function chronologySchematicLayout(locations, journey) {
-  const firstVisit = new Map();
-  journey.forEach((event, index) => {
-    const locationId = event.location_entity_id === null ? null : Number(event.location_entity_id);
-    if (locationId !== null && !firstVisit.has(locationId)) firstVisit.set(locationId, index);
-  });
-  const ordered = [...locations].sort((left, right) => {
-    const leftVisit = firstVisit.get(Number(left.id)) ?? Number.MAX_SAFE_INTEGER;
-    const rightVisit = firstVisit.get(Number(right.id)) ?? Number.MAX_SAFE_INTEGER;
-    return leftVisit - rightVisit || Number(left.first_segment) - Number(right.first_segment) || Number(left.id) - Number(right.id);
-  });
-  const columns = Math.max(3, Math.min(7, Math.ceil(Math.sqrt(Math.max(1, ordered.length) * 1.5))));
-  const horizontalGap = 174;
-  const verticalGap = 126;
+// 后端快照不可用时使用确定性的黄金角投影；它只保证稳定和可读，不伪造方位。
+function stableTopologyFallback(locations) {
+  const ordered = [...locations].sort((left, right) => Number(left.id) - Number(right.id));
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
   return new Map(ordered.map((location, index) => {
-    const row = Math.floor(index / columns);
-    const rawColumn = index % columns;
-    const column = row % 2 ? columns - 1 - rawColumn : rawColumn;
-    return [Number(location.id), { x: 90 + column * horizontalGap, y: 76 + row * verticalGap, fixed: true }];
+    const radius = 92 * Math.sqrt(index + 1);
+    const angle = index * goldenAngle + (Number(location.id) % 17) * 0.013;
+    return [Number(location.id), {
+      x: 620 + Math.cos(angle) * radius,
+      y: 420 + Math.sin(angle) * radius * 0.72,
+      fixed: true,
+      source: "stable_topology_projection",
+    }];
   }));
 }
 
 // 逻辑地图使用与关系图相同的成熟约束布局；原文明示的方位会成为硬相对位置约束。
 function layoutMapLocations(locations, journey, relations) {
-  const directionalKinds = new Set(["north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest", "upstream", "downstream"]);
-  const directionalEvidenceCount = relations.filter((relation) => directionalKinds.has(relation.relative_position)).length;
-  const directionCoverage = directionalEvidenceCount / Math.max(1, locations.length);
-  if (directionCoverage < 0.35) {
-    return chronologySchematicLayout(locations, journey);
+  const snapshotNodes = new Map((state.mapLayout?.nodes || []).map((node) => [Number(node.id), node]));
+  if (locations.length && locations.every((location) => snapshotNodes.has(Number(location.id)))) {
+    return new Map(locations.map((location) => {
+      const point = snapshotNodes.get(Number(location.id));
+      return [Number(location.id), {
+        x: Number(point.x), y: Number(point.y), fixed: true,
+        z: Number(point.z || 0), source: point.coordinate_source,
+        evidenceLevel: point.evidence_level,
+      }];
+    }));
   }
   if (typeof window.cytoscape !== "function" || locations.length < 2) {
-    return legacyLayoutMapLocations(locations, journey, relations);
+    return stableTopologyFallback(locations);
   }
   try {
     const firstVisit = new Map();
@@ -1118,11 +1153,7 @@ function layoutMapLocations(locations, journey, relations) {
       const rightVisit = firstVisit.get(Number(right.id)) ?? Number.MAX_SAFE_INTEGER;
       return leftVisit - rightVisit || Number(left.first_segment) - Number(right.first_segment) || Number(left.id) - Number(right.id);
     });
-    const initialColumns = Math.max(3, Math.ceil(Math.sqrt(orderedLocations.length * 1.7)));
-    const initialPositions = new Map(orderedLocations.map((location, index) => [
-      Number(location.id),
-      { x: (index % initialColumns) * 170, y: Math.floor(index / initialColumns) * 118 },
-    ]));
+    const initialPositions = stableTopologyFallback(orderedLocations);
     const elements = locations.map((location) => ({
       group: "nodes",
       position: initialPositions.get(Number(location.id)),
@@ -1248,104 +1279,8 @@ function layoutMapLocations(locations, journey, relations) {
     ]));
   } catch (error) {
     console.warn("地图约束布局失败，已使用保守布局。", error);
-    return legacyLayoutMapLocations(locations, journey, relations);
+    return stableTopologyFallback(locations);
   }
-}
-
-// 组件不可用时保留确定性的本地布局，避免地图整块空白。
-function legacyLayoutMapLocations(locations, journey, relations) {
-  const firstVisit = new Map();
-  journey.forEach((event, index) => {
-    if (event.location_entity_id !== null && !firstVisit.has(event.location_entity_id)) {
-      firstVisit.set(event.location_entity_id, index);
-    }
-  });
-  const ordered = [...locations].sort((left, right) => {
-    const leftVisit = firstVisit.has(left.id) ? firstVisit.get(left.id) : Number.MAX_SAFE_INTEGER;
-    const rightVisit = firstVisit.has(right.id) ? firstVisit.get(right.id) : Number.MAX_SAFE_INTEGER;
-    return leftVisit - rightVisit || left.first_segment - right.first_segment || left.id - right.id;
-  });
-  const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(1, locations.length) * 1.75)));
-  const rows = Math.max(1, Math.ceil(locations.length / columns));
-  const points = new Map();
-  ordered.forEach((location, index) => {
-    const hasCoordinates = location.x !== null && location.y !== null && Number.isFinite(Number(location.x)) && Number.isFinite(Number(location.y));
-    if (hasCoordinates) {
-      points.set(location.id, { x: 70 + Number(location.x) * 7.6, y: 55 + Number(location.y) * 3.55, fixed: true });
-      return;
-    }
-    const row = Math.floor(index / columns);
-    let column = index % columns;
-    if (row % 2) column = columns - 1 - column;
-    const x = 90 + column * (720 / Math.max(1, columns - 1));
-    const y = 78 + row * (320 / Math.max(1, rows - 1)) + (((location.id * 13) % 5) - 2) * 7;
-    points.set(location.id, { x, y, fixed: false });
-  });
-
-  const vectors = {
-    north: [0, -95], south: [0, 95], east: [135, 0], west: [-135, 0],
-    northeast: [110, -80], northwest: [-110, -80], southeast: [110, 80], southwest: [-110, 80],
-    upstream: [-80, -65], downstream: [80, 65], near: [85, 25], inside: [50, 30], contains: [-50, -30],
-  };
-  const constrainPoints = () => points.forEach((point) => {
-    point.x = Math.max(48, Math.min(852, point.x));
-    point.y = Math.max(48, Math.min(422, point.y));
-  });
-  for (let pass = 0; pass < 42; pass += 1) {
-    relations.forEach((relation) => {
-      const source = points.get(relation.source_entity_id);
-      const target = points.get(relation.target_entity_id);
-      const vector = vectors[relation.relative_position];
-      if (!source || !target || !vector) return;
-      const desiredX = target.x + vector[0];
-      const desiredY = target.y + vector[1];
-      const strength = 0.16 * Math.max(0.45, Number(relation.confidence || 0.7));
-      if (!source.fixed) {
-        source.x += (desiredX - source.x) * strength;
-        source.y += (desiredY - source.y) * strength;
-      } else if (!target.fixed) {
-        target.x += (source.x - vector[0] - target.x) * strength;
-        target.y += (source.y - vector[1] - target.y) * strength;
-      }
-    });
-
-    // 节点使用矩形间距，防止圆点分开后文字仍然挤在一起。
-    const allPoints = [...points.values()];
-    for (let leftIndex = 0; leftIndex < allPoints.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < allPoints.length; rightIndex += 1) {
-        const left = allPoints[leftIndex];
-        const right = allPoints[rightIndex];
-        const dx = right.x - left.x || 0.1;
-        const dy = right.y - left.y || 0.1;
-        if (Math.abs(dx) >= 105 || Math.abs(dy) >= 72) continue;
-        const pushX = (105 - Math.abs(dx)) * 0.08 * Math.sign(dx);
-        const pushY = (72 - Math.abs(dy)) * 0.08 * Math.sign(dy);
-        if (!left.fixed) { left.x -= pushX; left.y -= pushY; }
-        if (!right.fixed) { right.x += pushX; right.y += pushY; }
-      }
-    }
-    constrainPoints();
-  }
-
-  // 方位约束稳定后再单独做一轮避让，防止多个地点被约束推到同一条边界线上。
-  const finalPoints = [...points.values()];
-  for (let pass = 0; pass < 34; pass += 1) {
-    for (let leftIndex = 0; leftIndex < finalPoints.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < finalPoints.length; rightIndex += 1) {
-        const left = finalPoints[leftIndex];
-        const right = finalPoints[rightIndex];
-        const dx = right.x - left.x || (rightIndex % 2 ? 0.1 : -0.1);
-        const dy = right.y - left.y || (leftIndex % 2 ? 0.1 : -0.1);
-        if (Math.abs(dx) >= 108 || Math.abs(dy) >= 72) continue;
-        const pushX = (108 - Math.abs(dx)) * 0.16 * Math.sign(dx);
-        const pushY = (72 - Math.abs(dy)) * 0.16 * Math.sign(dy);
-        if (!left.fixed) { left.x -= pushX; left.y -= pushY; }
-        if (!right.fixed) { right.x += pushX; right.y += pushY; }
-      }
-    }
-    constrainPoints();
-  }
-  return points;
 }
 
 // 地图只在画布上显示短地名，完整名称保留在 title 和下方地点详情中。
@@ -1355,7 +1290,7 @@ function mapDisplayName(name) {
 }
 
 // 地名从四个方向选择空位，并用底色保持线路穿过时仍然可读。
-function mapLabelPlacements(locations, points) {
+function mapLabelPlacements(locations, points, journey, currentLocationId) {
   const pointValues = [...points.values()];
   const limits = {
     left: Math.min(...pointValues.map((point) => point.x)) - 90,
@@ -1367,8 +1302,22 @@ function mapLabelPlacements(locations, points) {
     const point = points.get(location.id);
     return { left: point.x - 25, right: point.x + 25, top: point.y - 25, bottom: point.y + 25 };
   });
+  const firstVisit = new Map();
+  journey.forEach((event, index) => {
+    if (event.location_entity_id !== null && !firstVisit.has(Number(event.location_entity_id))) {
+      firstVisit.set(Number(event.location_entity_id), index);
+    }
+  });
+  const ordered = [...locations].sort((left, right) => {
+    const leftCurrent = Number(left.id) === Number(currentLocationId) ? 1 : 0;
+    const rightCurrent = Number(right.id) === Number(currentLocationId) ? 1 : 0;
+    return rightCurrent - leftCurrent
+      || Number(right.importance || 0) - Number(left.importance || 0)
+      || (firstVisit.get(Number(left.id)) ?? 1_000_000) - (firstVisit.get(Number(right.id)) ?? 1_000_000)
+      || Number(left.id) - Number(right.id);
+  });
   const result = new Map();
-  locations.forEach((location) => {
+  ordered.forEach((location) => {
     const point = points.get(location.id);
     const width = Math.max(52, [...mapDisplayName(location.name)].length * 14 + 18);
     const candidates = [
@@ -1385,7 +1334,9 @@ function mapLabelPlacements(locations, points) {
     let selectedScore = Number.POSITIVE_INFINITY;
     for (const candidate of candidates) {
       const left = candidate.anchor === "middle" ? candidate.x - width / 2 : candidate.anchor === "start" ? candidate.x : candidate.x - width;
-      const box = { left, right: left + width, top: candidate.y - 16, bottom: candidate.y + 7 };
+      // Keep a small gutter because SVG text metrics and rounded label boxes do
+      // not resolve to exactly the same pixels at every browser zoom level.
+      const box = { left: left - 8, right: left + width + 8, top: candidate.y - 21, bottom: candidate.y + 12 };
       const outside = box.left < limits.left || box.right > limits.right || box.top < limits.top || box.bottom > limits.bottom;
       const collisions = occupied.filter((placed) => !(box.right < placed.left || box.left > placed.right || box.bottom < placed.top || box.top > placed.bottom)).length;
       const score = collisions * 1000 + (outside ? 100 : 0);
@@ -1395,8 +1346,10 @@ function mapLabelPlacements(locations, points) {
       }
       if (score === 0) break;
     }
-    occupied.push(selected.box);
-    result.set(location.id, selected);
+    const isCurrent = Number(location.id) === Number(currentLocationId);
+    const visible = selectedScore === 0 || isCurrent;
+    if (visible) occupied.push(selected.box);
+    result.set(location.id, { ...selected, visible });
   });
   return result;
 }
@@ -1491,7 +1444,8 @@ function renderMap() {
     })),
   ];
   const points = layoutMapLocations(locations, journey, topologyConstraints);
-  const labelPlacements = mapLabelPlacements(locations, points);
+  const currentLocationId = journey[state.mapStep]?.location_entity_id;
+  const labelPlacements = mapLabelPlacements(locations, points, journey, currentLocationId);
   state.mapPoints = points;
   const pointValues = [...points.values()];
   state.mapBounds = {
@@ -1501,7 +1455,14 @@ function renderMap() {
     maxY: Math.max(...pointValues.map((point) => point.y)) + 90,
   };
   state.mapStep = Math.max(0, Math.min(state.mapStep, Math.max(0, journey.length - 1)));
-  const grid = `<rect class="map-grid-plane" x="${state.mapBounds.minX}" y="${state.mapBounds.minY}" width="${state.mapBounds.maxX - state.mapBounds.minX}" height="${state.mapBounds.maxY - state.mapBounds.minY}" fill="url(#map-grid-pattern)"></rect>`;
+  const paper = `<rect class="map-paper-plane" x="${state.mapBounds.minX}" y="${state.mapBounds.minY}" width="${state.mapBounds.maxX - state.mapBounds.minX}" height="${state.mapBounds.maxY - state.mapBounds.minY}"></rect>`;
+  const visibleLocationIds = new Set(locations.map((location) => Number(location.id)));
+  const semanticRegions = state.mapPresentation === "atlas" ? (state.mapLayout?.regions || []).map((region, index) => {
+    const regionNodes = (region.node_ids || []).filter((nodeId) => visibleLocationIds.has(Number(nodeId)));
+    if (regionNodes.length < 3 || !(region.hull || []).length) return "";
+    const path = region.hull.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${Number(point.x)} ${Number(point.y)}`).join(" ");
+    return `<g class="semantic-region region-${index % 6}"><path d="${path} Z"></path><title>${escapeHtml(region.label)}；语义区域不代表原文明示边界</title></g>`;
+  }).join("") : "";
   const geography = geographyRelations.slice(0, 36).map((relation) => {
     const start = points.get(relation.source_entity_id);
     const end = points.get(relation.target_entity_id);
@@ -1542,7 +1503,8 @@ function renderMap() {
     const point = points.get(location.id);
     const label = labelPlacements.get(location.id);
     const rectX = label.anchor === "middle" ? label.x - label.width / 2 : label.anchor === "start" ? label.x - 5 : label.x - label.width + 5;
-    return `<g class="map-node graph-node" data-location="${location.id}" tabindex="0" role="button" aria-label="跳到${escapeHtml(location.name)}发生的剧情"><circle cx="${point.x}" cy="${point.y}" r="20"></circle><line class="map-label-stem" x1="${point.x}" y1="${point.y}" x2="${label.x}" y2="${label.y - 4}"></line><rect class="map-label-bg" x="${rectX}" y="${label.y - 17}" width="${label.width}" height="24" rx="7"></rect><text x="${label.x}" y="${label.y}" text-anchor="${label.anchor}">${escapeHtml(mapDisplayName(location.name))}</text><title>${escapeHtml(location.name)} · ${escapeHtml(location.summary)}</title></g>`;
+    const labelClass = label.visible ? "map-node-label" : "map-node-label map-node-label-collided";
+    return `<g class="map-node graph-node" data-location="${location.id}" tabindex="0" role="button" aria-label="跳到${escapeHtml(location.name)}发生的剧情"><circle cx="${point.x}" cy="${point.y}" r="20"></circle><g class="${labelClass}"><line class="map-label-stem" x1="${point.x}" y1="${point.y}" x2="${label.x}" y2="${label.y - 4}"></line><rect class="map-label-bg" x="${rectX}" y="${label.y - 17}" width="${label.width}" height="24" rx="7"></rect><text x="${label.x}" y="${label.y}" text-anchor="${label.anchor}">${escapeHtml(mapDisplayName(location.name))}</text></g><title>${escapeHtml(location.name)} · ${escapeHtml(location.summary)}</title></g>`;
   }).join("");
   const firstEvent = journey[state.mapStep];
   const firstPoint = firstEvent?.location_entity_id !== null ? points.get(firstEvent.location_entity_id) : null;
@@ -1553,20 +1515,19 @@ function renderMap() {
   const directionalCount = geographyRelations.filter((relation) => directionalKinds.has(relation.relative_position)).length;
   const containmentCount = geographyRelations.filter((relation) => ["inside", "contains"].includes(relation.relative_position)).length;
   const directionCoverage = directionalCount / Math.max(1, locations.length);
-  const positionNote = directionalCount && directionCoverage >= 0.35
-    ? `已使用 ${directionalCount} 条原文方向关系固定相对方位；缺少方向的地点只表示故事拓扑。`
-    : directionalCount
-      ? `原文只有 ${directionalCount} 条稀疏方向关系；整体按首次到达顺序排列，方向关系单独画线，不冒充完整地理。`
+  const projectionCount = [...points.values()].filter((point) => point.source === "stable_topology_projection").length;
+  const positionNote = directionalCount
+    ? `已使用 ${directionalCount} 条原文方向关系约束方位；${projectionCount} 个地点只使用稳定拓扑坐标。`
     : containmentCount
-      ? `原文没有东南西北坐标；二维图按首次到达顺序显示，三维纵深使用 ${containmentCount} 条包含关系。`
+      ? `原文没有东南西北坐标；地图保持故事拓扑，三维纵深只使用 ${containmentCount} 条包含关系。`
       : routeTopology.length
-      ? `原文没有给出东南西北坐标；地图使用 ${routeTopology.length} 条明确移动连接建立拓扑路线。`
-      : "原文尚未提供可核验方位；地图保留完整编年，并将地点关系明确标为拓扑示意。";
-  const mapModes = `<div class="map-view-toolbar"><div class="segmented-control" aria-label="地图视图"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D 方位</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D 层级</button></div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；纵深只表示有证据的包含层级。" : "拖动平移，滚轮缩放；东南西北只来自原文证据。"}</span></div>`;
+        ? `原文没有东南西北坐标；地图根据 ${routeTopology.length} 条移动连接形成稳定拓扑，不把坐标冒充真实方位。`
+        : "原文尚未提供可核验方位；地点使用稳定拓扑投影，坐标不代表真实方向。";
+  const mapModes = `<div class="map-view-toolbar"><div class="map-toolbar-groups"><div class="segmented-control" aria-label="地图表现"><button class="map-presentation${state.mapPresentation === "atlas" ? " active" : ""}" data-presentation="atlas" type="button">语义世界图</button><button class="map-presentation${state.mapPresentation === "evidence" ? " active" : ""}" data-presentation="evidence" type="button">证据逻辑图</button></div><div class="segmented-control" aria-label="地图维度"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D</button></div></div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；纵深只表示有证据的包含层级。" : state.mapPresentation === "atlas" ? "彩色区域只整理故事拓扑，不代表原文明示边界。" : "只显示能够回到原文的方向、包含和移动关系。"}</span></div>`;
   const viewportControls = `<div class="map-viewport-controls" aria-label="地图缩放"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-zoom-reset" type="button">复位</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div>`;
   const mapCanvas = state.mapMode === "3d"
-    ? `<div class="map-3d-shell"><div id="map-3d" class="map-3d" role="img" aria-label="可旋转、缩放并逐步播放的三维故事地图"></div><div id="map-3d-labels" class="map-3d-labels" aria-hidden="true"></div><div class="map-3d-axis" aria-hidden="true"><span>北 ↑</span><span>纵深＝包含层级</span><span>东 →</span></div></div>`
-    : `<svg class="map-svg" viewBox="0 0 900 470" role="img" aria-label="可拖动、缩放并逐步播放的二维故事地图"><defs><pattern id="map-grid-pattern" width="110" height="94" patternUnits="userSpaceOnUse"><path class="map-grid" d="M 110 0 L 0 0 0 94"></path></pattern><marker id="route-arrow" markerUnits="userSpaceOnUse" markerWidth="3.2" markerHeight="3.2" refX="2.8" refY="1.6" orient="auto"><path d="M0,0 L3.2,1.6 L0,3.2 z" fill="context-stroke"></path></marker></defs>${grid}${geography}${topology}${routes}${nodes}<g id="journey-avatar" class="journey-avatar" ${initialMarker}><circle r="15"></circle><text y="4">${escapeHtml(initials)}</text></g></svg>`;
+    ? `<div class="map-3d-shell"><div id="map-3d" class="map-3d" role="img" aria-label="可旋转、缩放并逐步播放的三维故事地图"></div><div id="map-3d-labels" class="map-3d-labels" aria-hidden="true"></div><div class="map-3d-axis" aria-hidden="true">${directionalCount ? "<span>北 ↑</span>" : "<span>平面方位未知</span>"}<span>纵深＝有证据的包含层级</span>${directionalCount ? "<span>东 →</span>" : "<span>拓扑坐标</span>"}</div></div>`
+    : `<svg class="map-svg" viewBox="0 0 900 470" role="img" aria-label="可拖动、缩放并逐步播放的二维故事地图"><defs><marker id="route-arrow" markerUnits="userSpaceOnUse" markerWidth="3.2" markerHeight="3.2" refX="2.8" refY="1.6" orient="auto"><path d="M0,0 L3.2,1.6 L0,3.2 z" fill="context-stroke"></path></marker></defs>${paper}${semanticRegions}${geography}${topology}${routes}${nodes}<g id="journey-avatar" class="journey-avatar" ${initialMarker}><circle r="15"></circle><text y="4">${escapeHtml(initials)}</text></g></svg>`;
   $("#view-panel").innerHTML = `${panelHead("逻辑地图与故事编年", "二维和三维共用同一个故事步骤、地点证据和播放状态。", legend)}<p class="map-position-note">${escapeHtml(positionNote)}</p>${protagonistPicker}${controls}<div class="journey-layout"><div class="map-stage">${mapModes}${viewportControls}${mapCanvas}</div><section id="map-event-card" class="map-event-card" aria-live="polite"></section></div><section id="map-location-panel" class="map-location-panel" aria-live="polite"></section>`;
   bindProtagonistPicker();
   if (state.mapMode === "3d") {
@@ -1580,6 +1541,13 @@ function renderMap() {
     state.mapMode = nextMode;
     window.localStorage.setItem("novel-atlas-map-mode", nextMode);
     disposeMapGraph();
+    renderMap();
+  }));
+  $$(".map-presentation").forEach((button) => button.addEventListener("click", () => {
+    const nextPresentation = button.dataset.presentation;
+    if (nextPresentation === state.mapPresentation) return;
+    state.mapPresentation = nextPresentation;
+    window.localStorage.setItem("novel-atlas-map-presentation", nextPresentation);
     renderMap();
   }));
   if (!journey.length) {
@@ -1664,14 +1632,15 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
     const point = points.get(Number(location.id));
     const x = (point.x - centerX) * 0.72;
     const y = -(point.y - centerY) * 0.72;
-    const z = (depths.get(Number(location.id)) || 0) * 86;
+    const depth = Number.isFinite(Number(point.z)) ? Number(point.z) / 90 : (depths.get(Number(location.id)) || 0);
+    const z = depth * 86;
     return {
       ...location,
       id: `place:${location.id}`,
       locationId: Number(location.id),
       mapPoint: point,
       x, y, z, fx: x, fy: y, fz: z,
-      depth: depths.get(Number(location.id)) || 0,
+      depth,
       visible: true,
       active: false,
     };
@@ -1700,6 +1669,7 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
       target: `place:${route.to_id}`,
       kind: "topology",
       label: route.transports.map((transport) => transportLabels[transport] || transport).filter(Boolean).join("、") || "移动",
+      transport: route.transports.find(Boolean) || "road",
       sourceLocationId: Number(route.from_id),
       targetLocationId: Number(route.to_id),
       visible: true,
@@ -1717,6 +1687,7 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
         kind: "journey",
         step,
         label: leg?.gap_status === "unknown_path" ? "路径有缺口" : transportLabels[leg?.transport || event.transport] || "路线",
+        transport: leg?.transport || event.transport || "road",
         sourceLocationId: Number(previousLocated.location_entity_id),
         targetLocationId: Number(event.location_entity_id),
         visible: true,
@@ -1756,18 +1727,18 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
     .nodeVal((node) => node.kind === "actor" ? 12 : node.active ? 8 : 4.5 + Math.min(3, Number(node.importance || 0) * 2))
     .nodeResolution(20)
     .nodeOpacity(1)
-    .nodeColor((node) => node.kind === "actor" ? "#111111" : node.active ? "#2b2b2b" : node.focused === false ? "#e0e0dc" : node.depth ? "#8a8a86" : "#c7c7c2")
+    .nodeColor((node) => node.kind === "actor" ? semanticPalette.current : node.active ? semanticPalette.current : node.focused === false ? "#8b97d4" : semanticPalette.place)
     .linkLabel((link) => escapeHtml(link.label || "连接"))
     .linkVisibility((link) => link.visible !== false)
-    .linkColor((link) => link.current ? "#111111" : link.kind === "journey" ? "#8a8a86" : link.kind === "topology" ? "#a9a9a4" : "#cecec9")
+    .linkColor((link) => link.current ? semanticPalette.current : link.kind === "journey" ? (semanticPalette[link.transport] || semanticPalette.road) : link.kind === "topology" ? "#718096" : semanticPalette.place)
     .linkWidth((link) => link.current ? 2.5 : link.kind === "journey" ? 1.2 : 0.55)
     .linkOpacity(0.76)
     .linkDirectionalArrowLength((link) => link.kind === "journey" ? 2.4 : 0)
     .linkDirectionalArrowRelPos(0.76)
-    .linkDirectionalArrowColor(() => "#333333")
+    .linkDirectionalArrowColor((link) => link.current ? semanticPalette.current : (semanticPalette[link.transport] || semanticPalette.place))
     .linkDirectionalParticles((link) => link.current ? 1 : 0)
     .linkDirectionalParticleWidth(1.6)
-    .linkDirectionalParticleColor(() => "#111111")
+    .linkDirectionalParticleColor(() => semanticPalette.current)
     .linkDirectionalParticleSpeed(0.012)
     .cooldownTicks(0)
     .onNodeHover((node) => {
@@ -1897,7 +1868,7 @@ function renderMapLocationDetails(locationId) {
     return `<li><strong>${escapeHtml(direction || item.relative_position)}</strong> ${escapeHtml(otherName)}<span>${escapeHtml(item.summary)}</span></li>`;
   }).join("");
   const routeItems = routes.map((item) => `<li><strong>${escapeHtml(item.from_name || "起点未知")} → ${escapeHtml(item.to_name || "终点未知")}</strong><span>${escapeHtml(transportLabels[item.transport] || item.transport || "方式未说明")} · ${escapeHtml(item.summary)}</span></li>`).join("");
-  const eventItems = events.map((item) => `<button class="map-location-event" data-event="${item.id}" type="button"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(chapterForSegment(item.first_segment))}</span><small>${escapeHtml(item.summary)}</small></button>`).join("");
+  const eventItems = events.map((item) => `<button class="map-location-event" data-event="${item.id}" type="button"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(chapterForSegment(item.first_segment))}</span><small>${escapeHtml(eventNarrativeText(item))}</small></button>`).join("");
   panel.innerHTML = `<header><span class="eyebrow">地图节点</span><h3>${escapeHtml(location.name)}</h3><p>${escapeHtml(location.summary || "原文已识别这个地点，详细说明仍待补充。")}</p></header><div class="map-location-columns"><section><h4>此处发生的剧情</h4>${eventItems || '<p class="muted-copy">主线人物尚未在这里发生已收录事件。</p>'}</section><section><h4>方位与路线</h4>${relationItems || routeItems ? `<ul>${relationItems}${routeItems}</ul>` : '<p class="muted-copy">原文没有提供可验证的方位或通行关系。</p>'}</section></div>`;
   $$(".map-location-event").forEach((button) => button.addEventListener("click", () => {
     const step = journey.findIndex((item) => Number(item.id) === Number(button.dataset.event));
@@ -2180,7 +2151,7 @@ function setMapStep(nextStep, animate = true) {
   const pathStatus = event.location_entity_id === null
     ? "原文没有确认当前地点，人物标记暂时隐藏"
     : leg?.gap_status === "unknown_path" ? "原文路径有缺口，节点仍完整保留" : "路线连续";
-  $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(event.summary)}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
+  $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
   $("#map-evidence")?.addEventListener("click", () => openEventSource(event));
   $$(".map-history-step").forEach((button) => button.addEventListener("click", () => {
     const historyStep = journey.findIndex((item) => Number(item.id) === Number(button.dataset.event));
@@ -2352,17 +2323,111 @@ async function loadArchivedWorldNotes() {
 }
 
 function renderDatabase(query = "", category = "all") {
-  const entries = state.overview.entries.filter((entry) => {
-    const haystack = `${entry.name} ${entry.summary} ${Object.entries(entry.attributes).flat().join(" ")}`.toLowerCase();
-    return (category === "all" || entry.category === category) && haystack.includes(query.toLowerCase());
+  const facets = state.knowledgeFacets || { categories: [], concept_count: 0, evidence_link_count: 0, needs_classification: 0 };
+  const concepts = (state.concepts || []).filter((concept) => {
+    if (concept.scheme === "system") return false;
+    const haystack = `${concept.preferred_label} ${concept.description} ${(concept.aliases || []).join(" ")}`.toLowerCase();
+    return (category === "all" || concept.category === category) && haystack.includes(query.toLowerCase());
   });
-  const categories = [...new Set(state.overview.entries.map((item) => item.category))];
-  const options = ['<option value="all">全部类别</option>', ...categories.map((item) => `<option value="${escapeHtml(item)}" ${item === category ? "selected" : ""}>${escapeHtml(categoryLabels[item] || item)}</option>`)].join("");
-  const table = entries.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>类别</th><th>名称</th><th>说明</th><th>结构属性</th><th>依据</th></tr></thead><tbody>${entries.map((entry) => `<tr><td><span class="chip">${escapeHtml(categoryLabels[entry.category] || entry.category)}</span></td><td><button class="text-link target-button" data-type="entry" data-id="${entry.id}">${escapeHtml(entry.name)}</button></td><td>${escapeHtml(entry.summary)}</td><td><div class="attribute-list">${Object.entries(entry.attributes).map(([key, value]) => `<span class="chip amber">${escapeHtml(key)}：${escapeHtml(value)}</span>`).join("") || "—"}</div></td><td>${entry.evidence_count} 条</td></tr>`).join("")}</tbody></table></div>` : emptyState("没有匹配条目", "更换关键词或类别；未分析的原文不会产生数据库条目。");
-  $("#view-panel").innerHTML = panelHead("条目数据库", "物品、技能、属性、参数与术语使用同一套可扩展条目结构。") + `<div class="database-toolbar"><input id="entry-search" class="search-input" value="${escapeHtml(query)}" placeholder="搜索名称、说明或属性" aria-label="搜索条目"><select id="entry-category" class="search-input" aria-label="筛选条目类别">${options}</select></div>${table}`;
-  $("#entry-search").addEventListener("input", (event) => renderDatabase(event.target.value, $("#entry-category").value));
-  $("#entry-category").addEventListener("change", (event) => renderDatabase($("#entry-search").value, event.target.value));
-  bindTargets();
+  const facetButtons = [`<button class="knowledge-facet${category === "all" ? " active" : ""}" data-category="all" type="button"><span>全部知识</span><strong>${Number(facets.concept_count || 0)}</strong></button>`, ...(facets.categories || []).map((item) => `<button class="knowledge-facet${category === item.key ? " active" : ""}" data-category="${escapeHtml(item.key)}" type="button"><span>${escapeHtml(item.label || categoryLabels[item.key] || item.key)}</span><strong>${Number(item.count || 0)}</strong></button>`)].join("");
+  const conceptRows = concepts.length ? `<div class="concept-list">${concepts.map((concept) => `<button class="concept-row" data-concept="${concept.id}" type="button"><span><strong>${escapeHtml(concept.preferred_label)}</strong><span>${escapeHtml(concept.description || "尚未填写读者说明")}${concept.aliases?.length ? ` · 别名：${escapeHtml(concept.aliases.join("、"))}` : ""}</span></span><small>${escapeHtml(categoryLabels[concept.category] || concept.category)} · ${Number(concept.claim_count || 0)} 条事实 · ${Number(concept.evidence_count || 0)} 条证据</small></button>`).join("")}</div>` : emptyState("没有匹配的知识概念", "更换关键词或分类，无法自动判断的内容会保留在待归类中。");
+  const parentOptions = [`<option value="">不设置上位概念</option>`, ...(state.concepts || []).filter((item) => item.status === "active").map((item) => `<option value="${item.id}">${escapeHtml(item.preferred_label)}</option>`)].join("");
+  $("#view-panel").innerHTML = panelHead("知识库", "原子事实、概念分类和读者说明分层保存；原文、人工内容与外部资料不会混成一种证据。") + `<div class="knowledge-workspace"><aside class="knowledge-sidebar"><h3>分类</h3>${facetButtons}<details class="world-create"><summary>创建概念或文件夹</summary><div class="world-create-form"><label>分类<input id="concept-create-category" maxlength="80" value="term" placeholder="例如：skill"></label><label>名称<input id="concept-create-label" maxlength="160" placeholder="稳定、便于检索的名称"></label><label>上位概念<select id="concept-create-parent">${parentOptions}</select></label><label>别名<input id="concept-create-aliases" maxlength="500" placeholder="使用逗号分隔"></label><label>说明<textarea id="concept-create-description" rows="4" maxlength="5000"></textarea></label><button id="concept-create-submit" class="button button-primary" type="button">创建概念</button></div></details></aside><section class="knowledge-main"><div class="database-toolbar"><input id="entry-search" class="search-input" value="${escapeHtml(query)}" placeholder="搜索名称、别名、说明或证据" aria-label="搜索知识库"></div><div class="knowledge-summary-grid"><article><strong>${Number(facets.concept_count || 0)}</strong><span>知识概念</span></article><article><strong>${Number(facets.evidence_link_count || 0)}</strong><span>证据连接</span></article><article><strong>${Number(facets.needs_classification || 0)}</strong><span>待归类</span></article></div>${conceptRows}</section></div>`;
+  $("#entry-search").addEventListener("input", (event) => renderDatabase(event.target.value, category));
+  $$(".knowledge-facet").forEach((button) => button.addEventListener("click", () => renderDatabase(query, button.dataset.category)));
+  $$(".concept-row").forEach((button) => button.addEventListener("click", () => openConceptDetails(Number(button.dataset.concept))));
+  $("#concept-create-submit").addEventListener("click", async () => {
+    const label = $("#concept-create-label").value.trim();
+    const rawAliases = $("#concept-create-aliases").value.split(/[，,]/).map((item) => item.trim()).filter(Boolean);
+    if (!label) return toast("请填写概念名称。", true);
+    try {
+      const created = await api(`/api/books/${state.bookId}/concepts`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: $("#concept-create-category").value.trim() || "other",
+          preferred_label: label,
+          description: $("#concept-create-description").value.trim(),
+          aliases: rawAliases,
+          parent_concept_id: Number($("#concept-create-parent").value) || null,
+          scheme: "custom",
+        }),
+      });
+      await loadOverview(Number($("#progress-slider").value), true);
+      openConceptDetails(Number(created.id));
+    } catch (error) { toast(error.message, true); }
+  });
+}
+
+async function openConceptDetails(conceptId) {
+  const concept = (state.concepts || []).find((item) => Number(item.id) === Number(conceptId));
+  if (!concept) return;
+  state.inspectorTarget = { type: "concept", id: Number(conceptId) };
+  const requestSerial = ++state.inspectorRequestSerial;
+  $("#inspector-title").textContent = concept.preferred_label;
+  $("#inspector-body").innerHTML = '<div class="loading">正在读取原子事实…</div>';
+  $("#inspector").classList.add("open");
+  $(".app-shell").classList.add("inspector-open");
+  $("#inspector").setAttribute("aria-hidden", "false");
+  $("#inspector").removeAttribute("inert");
+  $("#scrim").hidden = !window.matchMedia("(max-width: 1100px)").matches;
+  try {
+    const [claims, revisions] = await Promise.all([
+      api(`/api/books/${state.bookId}/knowledge-claims?concept_id=${conceptId}`),
+      api(`/api/books/${state.bookId}/knowledge-revisions?target_type=concept&target_id=${conceptId}&limit=20`),
+    ]);
+    if (requestSerial !== state.inspectorRequestSerial) return;
+    const sourceOptions = state.overview.segments.map((segment) => `<option value="${segment.id}">${escapeHtml(segment.chapter_title)}</option>`).join("");
+    const claimCards = claims.map((claim) => {
+      const value = typeof claim.value === "string" ? claim.value : JSON.stringify(claim.value, null, 2);
+      const originalAction = ["entity", "world_note", "entry"].includes(claim.subject_type) ? `<button class="button button-quiet knowledge-original" data-type="${escapeHtml(claim.subject_type)}" data-id="${claim.subject_id}" type="button">打开原记录</button>` : "";
+      return `<article class="evidence-card knowledge-claim" data-claim="${claim.id}"><strong>${escapeHtml(claim.predicate)}</strong><p>${escapeHtml(value)}</p><small>${escapeHtml(claim.source_kind)} · ${escapeHtml(claim.status)} · ${Number(claim.evidence_count || 0)} 条证据</small><div class="review-actions">${originalAction}${claim.evidence_count ? `<button class="button button-quiet knowledge-claim-evidence" data-id="${claim.id}" type="button">查看证据</button>` : ""}<button class="button button-danger knowledge-claim-deprecate" data-id="${claim.id}" type="button">弃用</button></div><details class="record-editor"><summary>修改事实</summary><textarea class="knowledge-claim-value">${escapeHtml(value)}</textarea><select class="knowledge-claim-status"><option value="accepted" ${claim.status === "accepted" ? "selected" : ""}>正式</option><option value="parallel" ${claim.status === "parallel" ? "selected" : ""}>并列</option><option value="needs_resolution" ${claim.status === "needs_resolution" ? "selected" : ""}>待解决</option><option value="deprecated" ${claim.status === "deprecated" ? "selected" : ""}>弃用</option></select><button class="button button-primary knowledge-claim-save" data-id="${claim.id}" type="button">保存修改</button></details></article>`;
+    }).join("") || '<p class="detail-summary">当前概念还没有原子事实。</p>';
+    const revisionCards = revisions.length ? revisions.map((item) => `<li><strong>${escapeHtml(item.action)}</strong><span>${escapeHtml(item.created_at)}</span></li>`).join("") : "<li><span>还没有人工修改记录</span></li>";
+    $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(concept.description || "当前概念没有读者说明。")}</p><div class="detail-row"><span>分类</span><strong>${escapeHtml(categoryLabels[concept.category] || concept.category)}</strong></div><div class="detail-row"><span>别名</span><strong>${escapeHtml((concept.aliases || []).join("、") || "—")}</strong></div><div class="record-editor"><label>名称<input id="concept-edit-label" value="${escapeHtml(concept.preferred_label)}"></label><label>说明<textarea id="concept-edit-description">${escapeHtml(concept.description || "")}</textarea></label><label>别名<input id="concept-edit-aliases" value="${escapeHtml((concept.aliases || []).join("，"))}"></label><div class="review-actions"><button id="concept-save" class="button button-primary" type="button">保存概念</button><button id="concept-archive" class="button button-danger" type="button">归档概念</button></div></div><h3 class="evidence-title">原子事实</h3>${claimCards}<details class="record-editor"><summary>新增事实</summary><label>属性<input id="knowledge-claim-predicate" maxlength="120" placeholder="例如：使用条件"></label><label>值<textarea id="knowledge-claim-value"></textarea></label><label>来源<select id="knowledge-claim-source"><option value="human_note">人工说明</option><option value="original_text">原文事实</option><option value="external_fact">外部资料</option></select></label><label>原文章节<select id="knowledge-claim-segment">${sourceOptions}</select></label><label>逐字引文<textarea id="knowledge-claim-quote" maxlength="800"></textarea></label><button id="knowledge-claim-create" class="button button-primary" type="button">保存事实</button></details><details class="record-editor knowledge-history"><summary>修改记录 · ${revisions.length}</summary><ul>${revisionCards}</ul></details>`;
+    $("#concept-save").addEventListener("click", async () => {
+      try {
+        await api(`/api/concepts/${conceptId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ preferred_label: $("#concept-edit-label").value.trim(), description: $("#concept-edit-description").value.trim(), aliases: $("#concept-edit-aliases").value.split(/[，,]/).map((item) => item.trim()).filter(Boolean) }) });
+        closeInspector(); await loadOverview(Number($("#progress-slider").value), true); toast("概念已经保存。");
+      } catch (error) { toast(error.message, true); }
+    });
+    $("#concept-archive").addEventListener("click", async () => {
+      if (!window.confirm("归档概念后，事实和证据仍会保留。继续吗？")) return;
+      try { await api(`/api/concepts/${conceptId}`, { method: "DELETE" }); closeInspector(); await loadOverview(Number($("#progress-slider").value), true); } catch (error) { toast(error.message, true); }
+    });
+    $("#knowledge-claim-create").addEventListener("click", async () => {
+      const sourceKind = $("#knowledge-claim-source").value;
+      const predicate = $("#knowledge-claim-predicate").value.trim();
+      const value = $("#knowledge-claim-value").value.trim();
+      if (!predicate || !value) return toast("请填写属性和值。", true);
+      try {
+        await api(`/api/books/${state.bookId}/knowledge-claims`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concept_id: conceptId, predicate, value, source_kind: sourceKind, confidence: sourceKind === "original_text" ? 0.9 : 1, segment_id: sourceKind === "original_text" ? Number($("#knowledge-claim-segment").value) : null, evidence_quote: sourceKind === "original_text" ? $("#knowledge-claim-quote").value : "", qualifiers: {} }) });
+        await loadOverview(Number($("#progress-slider").value), true); openConceptDetails(conceptId);
+      } catch (error) { toast(error.message, true); }
+    });
+    $$(".knowledge-original").forEach((button) => button.addEventListener("click", () => openInspector(button.dataset.type, Number(button.dataset.id))));
+    $$(".knowledge-claim-evidence").forEach((button) => button.addEventListener("click", async () => {
+      const evidence = await api(`/api/evidence/knowledge_claim/${Number(button.dataset.id)}`);
+      if (!evidence.length) return toast("这条事实当前没有原文证据。", true);
+      openSource(Number(evidence[0].segment_id), evidence[0].quote);
+    }));
+    $$(".knowledge-claim-deprecate").forEach((button) => button.addEventListener("click", async () => {
+      try {
+        await api(`/api/knowledge-claims/${Number(button.dataset.id)}`, { method: "DELETE" });
+        await loadOverview(Number($("#progress-slider").value), true);
+        openConceptDetails(conceptId);
+      } catch (error) { toast(error.message, true); }
+    }));
+    $$(".knowledge-claim-save").forEach((button) => button.addEventListener("click", async () => {
+      const card = button.closest(".knowledge-claim");
+      const raw = card.querySelector(".knowledge-claim-value").value.trim();
+      let value = raw; try { value = JSON.parse(raw); } catch (_) { value = raw; }
+      try {
+        await api(`/api/knowledge-claims/${Number(button.dataset.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value, status: card.querySelector(".knowledge-claim-status").value }) });
+        await loadOverview(Number($("#progress-slider").value), true);
+        openConceptDetails(conceptId);
+      } catch (error) { toast(error.message, true); }
+    }));
+  } catch (error) { if (requestSerial === state.inspectorRequestSerial) $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(error.message)}</p>`; }
 }
 
 const collaborationStatusLabels = {
@@ -3005,7 +3070,7 @@ async function openInspector(type, id) {
     if (requestSerial !== state.inspectorRequestSerial
         || state.inspectorTarget?.type !== type
         || Number(state.inspectorTarget?.id) !== Number(id)) return;
-    const summary = item.summary || "当前条目没有补充说明。";
+    const summary = type === "event" ? eventNarrativeText(item) : item.summary || "当前条目没有补充说明。";
     const aliases = item.aliases?.length ? item.aliases.join("、") : "—";
     const details = type === "entity"
       ? [["类别", categoryLabels[item.kind] || item.kind], ["别名", aliases], ["首次出现", chapterForSegment(item.first_segment)]]
@@ -3045,7 +3110,7 @@ async function openInspector(type, id) {
     const nextEvent = journeyIndex >= 0 ? journey[journeyIndex + 1] : eventIndex >= 0 ? state.overview.events[eventIndex + 1] : null;
     const nextAction = nextEvent ? `<button class="button button-primary full next-event" data-id="${nextEvent.id}" type="button">下一步：${escapeHtml(nextEvent.title)}</button>` : "";
     const placeEvents = type === "entity" && item.kind === "place" ? state.overview.events.filter((event) => event.location_entity_id === item.id) : [];
-    const placeHistory = placeEvents.length ? `<h3 class="evidence-title">此地发生的历史</h3>${placeEvents.map((event) => `<button class="evidence-card place-event" data-id="${event.id}" type="button"><strong>${escapeHtml(event.temporal_value || "时间未知")} · ${escapeHtml(event.title)}</strong><small>${escapeHtml(event.summary)}</small></button>`).join("")}` : "";
+    const placeHistory = placeEvents.length ? `<h3 class="evidence-title">此地发生的历史</h3>${placeEvents.map((event) => `<button class="evidence-card place-event" data-id="${event.id}" type="button"><strong>${escapeHtml(event.temporal_value || "时间未知")} · ${escapeHtml(event.title)}</strong><small>${escapeHtml(eventNarrativeText(event))}</small></button>`).join("")}` : "";
     $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(summary)}</p><div class="detail-list">${detailRows}</div>${edit}${mapAction}${nextAction}${placeHistory}<h3 class="evidence-title">逐字原文证据</h3>${evidenceCards}<h3 class="evidence-title">生成溯源</h3>${lineagePanel}${review}`;
     $$(".source-button").forEach((button) => button.addEventListener("click", () => openSource(Number(button.dataset.segment), button.dataset.quote)));
     $$(".review-button").forEach((button) => button.addEventListener("click", () => reviewClaim(id, button.dataset.status)));
