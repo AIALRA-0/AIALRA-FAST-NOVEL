@@ -2,7 +2,7 @@
   "schema_version": 1,
   "product": "小说证据图谱",
   "release": "2.7.0",
-  "status": "vps_deployed_github_and_dns_pending",
+  "status": "vps_and_github_deployed_dns_pending",
   "source_commit": "35afa463a8ba562e311e1b851ac68a3800c73b68",
   "active_objective": "交付统一黑白壳层与彩色数据画布、语义世界图、证据约束叙事记忆、三层知识库，并完成安全发布与公网验收",
   "contracts": {
@@ -22,15 +22,15 @@
     "responsive_layout": "passed:720px-keyboard-and-touch-controls",
     "real_long_form": "passed:203-segments;1049-steps;94-relevant-places;no-default-label-overlap",
     "windows_package": "passed:2.7.0-readyz-smoke",
-    "safe_publish": "pending:exact-final-state-commit",
-    "github_ci": "passed:33023831773",
+    "safe_publish": "passed:61f0c82-publication-copy;0-block;0-gap;0-review",
+    "github_ci": "passed:33102636286",
     "vps_container": "passed:2.7.0-ready;readonly;nonroot;localhost-only",
     "auth_gateway_route": "passed:anonymous-302-when-host-resolved-manually;public-dns-pending",
     "public_authentication": "blocked:minimal-cloudflare-token-not-available"
   },
   "publication": {
     "github": "public-repository",
-    "github_commit": "b5a2257b7583a2e58ac91e26111d3c14ea3d85cb",
+    "github_commit": "61f0c82d1e7c184fdf5c9e1a3187d6fe4f282d1b",
     "deployment": "vps-container-2.7.0-ready",
     "hostname": "novel.aialra.online",
     "dns": "pending-zone-scoped-token",
