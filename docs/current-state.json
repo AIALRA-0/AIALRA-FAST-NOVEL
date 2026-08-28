@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.1-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "public-base-2295408ea820681a66d75c40314fc0c6b5d0d22c",
+  "source_commit": "release-v2.9.1-rc.1-660f28d3cb709b26198d5e7ad6f82e7c351c6f99",
   "active_objective": "交付地图控制栏防重叠、全部区域可见、可信金标准状态和混合五书评测范围",
   "contracts": {
     "fact_source": "原文证据",
@@ -31,8 +31,8 @@
   },
   "publication": {
     "github": "public-repository",
-    "github_commit": "2295408ea820681a66d75c40314fc0c6b5d0d22c",
-    "github_release": "pending-v2.9.1-rc.1-prerelease",
+    "github_commit": "660f28d3cb709b26198d5e7ad6f82e7c351c6f99",
+    "github_release": "published-v2.9.1-rc.1-prerelease",
     "deployment": "vps-running-2.9.1-rc.1-from-2295408",
     "hostname": "novel.aialra.online",
     "authentication": "Authentik gateway",
