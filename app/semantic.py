@@ -10,6 +10,8 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 from typing import Any
 
+from app.relations import normalize_relation_semantics
+
 
 GENERIC_IDENTITY_NAMES = {
     "师父", "师傅", "行者", "长老", "大王", "国王", "公主", "太子", "将军",
@@ -678,15 +680,17 @@ def repair_explicit_kinship(connection: sqlite3.Connection, book_id: int) -> int
         if len(targets) != 1 or int(targets[0]["id"]) == int(relative["id"]):
             continue
         target_id = int(targets[0]["id"])
+        directionality, reverse_predicate = normalize_relation_semantics(predicate)
         cursor = connection.execute(
             """
             INSERT OR IGNORE INTO claims(
-                book_id, source_entity_id, target_entity_id, predicate, summary,
-                confidence, status, first_segment, created_by
-            ) VALUES (?, ?, ?, ?, ?, 0.98, 'accepted', ?, 'derived')
+                book_id, source_entity_id, target_entity_id, predicate, directionality,
+                reverse_predicate, summary, confidence, status, first_segment, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 0.98, 'accepted', ?, 'derived')
             """,
             (
-                book_id, int(relative["id"]), target_id, predicate,
+                book_id, int(relative["id"]), target_id, predicate, directionality,
+                reverse_predicate,
                 str(relative["summary"]), int(relative["first_segment"]),
             ),
         )

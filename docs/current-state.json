@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "product": "小说证据图谱",
-  "release": "2.7.0",
-  "status": "vps_and_github_deployed_dns_pending",
-  "source_commit": "35afa463a8ba562e311e1b851ac68a3800c73b68",
-  "active_objective": "交付统一黑白壳层与彩色数据画布、语义世界图、证据约束叙事记忆、三层知识库，并完成安全发布与公网验收",
+  "release": "2.9.0-rc.1",
+  "status": "release_candidate_blocked_by_gold_evaluation_gate",
+  "source_commit": "5eef1e9",
+  "active_objective": "交付统一选择器、防剧透输入、费用预测 2.0、多级二维地图、导览式三维图集、质量工作台、体系图谱和剧情知识胶囊，并发布 2.9.0 候选版",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -14,19 +14,22 @@
     "public_data_policy": "只允许空库或合成演示数据"
   },
   "quality_gate": {
-    "unit_tests": "passed:104; skipped:1-environment-dependent",
+    "unit_tests": "passed:121; skipped:1-environment-dependent; collected:122",
     "javascript_syntax": "passed",
-    "browser_console_errors": "passed:3-synthetic-flows;1-real-long-form-flow",
+    "browser_console_errors": "passed:6-synthetic-flows;2-real-xiyouji-flows;1-five-book-library-flow",
     "map_step_parity": "passed:shared-StoryMapStep-2d-3d-chronology",
-    "rapid_navigation": "passed:120-step-browser-regression",
+    "rapid_navigation": "passed:rapid-story-context-reads-no-longer-lock-database",
     "responsive_layout": "passed:720px-keyboard-and-touch-controls",
-    "real_long_form": "passed:203-segments;1049-steps;94-relevant-places;no-default-label-overlap",
-    "windows_package": "passed:2.7.0-readyz-smoke",
-    "safe_publish": "passed:61f0c82-publication-copy;0-block;0-gap;0-review",
+    "real_corpus_import": "passed:5-books;1011-segments;3283083-characters",
+    "real_long_form": "passed:xiyouji-203-segments;1049-steps;157-places;45-regions;direct-threejs-region-meshes;40-bidirectional-relations",
+    "gold_evaluation": "blocked:28-confirmed-of-300;2-holdout;1-evaluated-book-of-5",
+    "cost_estimate": "v2-implemented:rendered-input-cache-exclusion-task_breakdown-median-conservative-confidence-backtest;historical-50-segment-run:estimated-0.85907-actual-0.2940147;v2-live-25-percent-target-pending-more-paid-samples",
+    "windows_package": "passed:2.9.0-rc.1-readyz-and-candidate-page;sha256-cc6a369394d9d67699b858883f9ab6f143fd8122c4cfadc584260833c6a5d8ce",
+    "safe_publish": "2.7.0-passed:61f0c82-publication-copy;2.9.0-rc.1-pending",
     "github_ci": "passed:33102636286",
     "vps_container": "passed:2.7.0-ready;readonly;nonroot;localhost-only",
     "auth_gateway_route": "passed:anonymous-302-when-host-resolved-manually;public-dns-pending",
-    "public_authentication": "blocked:minimal-cloudflare-token-not-available"
+    "public_authentication": "blocked:verify-dns-tls-authentik-and-revoke-chat-exposed-cloudflare-token-before-2.9-deploy"
   },
   "publication": {
     "github": "public-repository",
@@ -37,5 +40,5 @@
     "tls_certificate": "pending-dns",
     "authentication": "ExampleOrg Authentik unified gateway configured; public verification pending DNS and TLS"
   },
-  "last_updated": "2026-08-27"
+  "last_updated": "2026-08-28"
 }

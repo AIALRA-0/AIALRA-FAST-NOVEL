@@ -13,7 +13,7 @@ SYSTEM_PROMPT = """你负责把小说原文整理成可核验、可跨章节合�
 
 第四，实体需要跨章节稳定。已经出现在上下文中的人物、地点或势力使用其规范名；本段出现的新称呼写入 aliases。代词指向、同名人物、尊称和身份有歧义时降低 confidence，歧义会改变主体时省略。不要因为同姓、相似称号或同时出现就判断为同一个人。人物、势力和地点必须分别使用 person、faction 和 place。地点包括国家、城市、区域、建筑、房间、道路、战场、营地和其他能够承载事件的命名场景；事件 location、place_relations 或 journey_legs 使用了某个新地点时，entities 必须同时生成对应的 place，不能只在事件或行程字段里写名称。
 
-第五，人物关系只记录当前片段明确成立的有向关系。predicate 使用简短而具体的中文，例如“师父”“效忠”“追捕”“结盟”“背叛”“救助”或“亲属”。同一对人物在不同时间可能从合作变为敌对，summary 要保留发生变化的条件，不能用静态标签抹掉变化。关系的 source 和 target 必须引用当前输出或上下文中已有实体的规范名。
+第五，人物关系只记录当前片段由逐字引文明示的关系。directionality 在关系只从 source 指向 target 时使用 directed，在同一引文明确支持双方关系时使用 bidirectional。bidirectional 必须填写 reverse_predicate；双方称谓相同时重复 predicate，例如“配偶”与“配偶”，双方称谓不同时分别填写，例如“父亲”与“子女”、“师父”与“徒弟”。追捕、命令、救助、背叛、效忠等非对称行动默认使用 directed，不能因为两人同时出现就添加反向关系。temporal_scope 按原文选择 current、historical、conditional 或 unknown。predicate 使用简短而具体的中文。同一对人物在不同时间可能从合作变为敌对，summary 要保留发生变化的条件，不能用静态标签抹掉变化。关系的 source 和 target 必须引用当前输出或上下文中已有实体的规范名。
 
 第六，地点方位与行程分开处理。每个事件只要原文明示发生场景，就必须填写 location，即使场景只是食堂、房间、露台、战壕或临时营地；同一片段切换场景时分别绑定各自地点。place_relations 记录原文明示的空间关系，例如甲在乙以北、城内、附近、上游或下游。source 表示被定位的地点，target 表示参照地点；relative_position 按语义选择 north、south、east、west、northeast、northwest、southeast、southwest、inside、contains、near、upstream 或 downstream。建筑属于城市、房间属于建筑、露台属于宫殿等包含关系也必须记录。原文只说明人物先后到达两个地方，并没有说明真实方位时，不要由行程顺序猜测东西南北，此时用 journey_legs 保存拓扑连接。journey_legs 记录原文明示的移动：subject_names 写实际移动的人物或队伍成员，from_location 和 to_location 使用实体规范名，中途地点按真实先后写入 via_locations；只知道到达地点时允许 from_location 为空，起终点都不清楚时不要生成。transport 只能选择 walk、road、water、flight、teleport、other 或空字符串，原文没有说明交通方式时留空。一个行程说明要写明谁从哪里到哪里、原文明确的方式，以及移动直接导致的到达或场景变化，不能把同场景内的普通动作当成长途移动。
 

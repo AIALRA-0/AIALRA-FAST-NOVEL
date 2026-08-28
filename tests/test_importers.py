@@ -100,6 +100,25 @@ license
     assert "Produced by" not in parsed.segments[0].text
 
 
+def test_legacy_gutenberg_end_line_before_modern_marker_is_removed() -> None:
+    """旧版结束说明位于标准尾标记之前时也不能进入最后一个原文片段。"""
+
+    content = """*** START OF THE PROJECT GUTENBERG EBOOK 示例 ***
+第一回 正文
+
+人物回到故乡。
+
+End of Project Gutenberg's Example, by Example Author
+
+*** END OF THE PROJECT GUTENBERG EBOOK 示例 ***
+license
+""".encode("utf-8")
+    parsed = parse_book("示例.txt", content)
+    assert len(parsed.segments) == 1
+    assert "人物回到故乡" in parsed.segments[0].text
+    assert "Project Gutenberg" not in parsed.segments[0].text
+
+
 def test_html_and_docx_import_visible_text() -> None:
     """HTML 和 DOCX 会提取可见正文，并保留文档元数据。"""
 

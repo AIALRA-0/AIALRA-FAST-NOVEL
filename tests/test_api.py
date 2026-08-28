@@ -27,10 +27,52 @@ def test_health_and_readiness_endpoints(tmp_path: Path) -> None:
 
     with client_for(tmp_path) as client:
         health = client.get("/healthz").json()
-        assert health == {"status": "ok", "version": "2.7.0"}
+        assert health == {"status": "ok", "version": "2.9.0-rc.1"}
         readiness = client.get("/readyz")
         assert readiness.status_code == 200
-        assert readiness.json() == {"status": "ready", "version": "2.7.0"}
+        assert readiness.json() == {"status": "ready", "version": "2.9.0-rc.1"}
+
+
+def test_relation_direction_can_be_reviewed_without_creating_a_second_fact(tmp_path: Path) -> None:
+    """人工切换双向关系时保留同一事实、两个称谓和修订历史。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        overview = client.get(f"/api/books/{book_id}/overview?through_segment=4").json()
+        claim = next(item for item in overview["claims"] if item["predicate"] == "同行")
+        updated = client.patch(
+            f"/api/claims/{claim['id']}",
+            json={
+                "status": claim["status"],
+                "directionality": "bidirectional",
+                "reverse_predicate": "同行",
+                "reason": "原文同一证据明确支持同行关系",
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["directionality"] == "bidirectional"
+        assert updated.json()["reverse_predicate"] == "同行"
+        refreshed = client.get(f"/api/books/{book_id}/overview?through_segment=4").json()
+        matching = [item for item in refreshed["claims"] if item["id"] == claim["id"]]
+        assert len(matching) == 1
+        assert matching[0]["directionality"] == "bidirectional"
+        assert matching[0]["reverse_predicate"] == "同行"
+
+
+def test_asymmetric_relation_cannot_become_bidirectional_without_reverse_label(tmp_path: Path) -> None:
+    """追捕等非对称关系缺少明确反向称谓时必须继续保持单向。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if "120章" in book["title"])
+        overview = client.get(f"/api/books/{book_id}/overview?through_segment=119").json()
+        claim = next(item for item in overview["claims"] if item["predicate"] not in {"父亲", "母亲", "父母", "儿子", "女儿", "子女", "师父", "师傅", "徒弟", "丈夫", "妻子", "配偶", "夫妻", "伴侣", "兄弟", "姐妹", "兄妹", "姐弟", "同胞", "亲属"})
+        updated = client.patch(
+            f"/api/claims/{claim['id']}",
+            json={"status": claim["status"], "directionality": "bidirectional", "reason": "缺少反向称谓的错误请求"},
+        )
+        assert updated.status_code == 200
+        assert updated.json()["directionality"] == "directed"
+        assert updated.json()["reverse_predicate"] is None
 
 
 def test_demo_overview_respects_spoiler_boundary(tmp_path: Path) -> None:
@@ -145,6 +187,122 @@ def test_v27_atlas_narrative_and_knowledge_endpoints_share_existing_facts(tmp_pa
         assert all("evidence_count" in item for item in concepts)
 
 
+def test_v29_map_layout_exposes_bounds_lod_and_focus_only_inferred_regions(tmp_path: Path) -> None:
+    """2.9 atlas keeps every real node while deriving bounded levels of detail."""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if "120章" in book["title"])
+        atlas = client.get(
+            f"/api/books/{book_id}/map-layout",
+            params={"through_segment": 119, "detail_level": "low", "focus": "current"},
+        ).json()
+        assert atlas["layout_version"] == "semantic-atlas-v2.9-lod4"
+        assert atlas["requested_detail_level"] == "low"
+        assert atlas["requested_focus"] == "current"
+        assert atlas["world_bounds"]["width"] > 0
+        assert atlas["world_bounds"]["height"] > 0
+        assert set(atlas["detail_levels"]) == {"low", "medium", "high"}
+        assert atlas["detail_levels"]["high"]["node_ids"] == [item["id"] for item in atlas["nodes"]]
+        assert all(
+            item["display_policy"] == "focus_only"
+            for item in atlas["regions"] if item["kind"] == "topological_cluster"
+        )
+
+
+def test_v29_system_graph_and_story_context_are_evidence_and_spoiler_bounded(tmp_path: Path) -> None:
+    """System nodes require literal evidence in the UI flow and story capsules stay inside progress."""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        overview = client.get(f"/api/books/{book_id}/overview?through_segment=4").json()
+        segment = overview["segments"][0]
+        source = client.get(f"/api/segments/{segment['id']}").json()
+        quote = source["text"][: min(16, len(source["text"]))]
+        created = client.post(
+            f"/api/books/{book_id}/systems",
+            json={"name": "测试阶层", "category": "social", "structure_type": "partial_order", "description": "只测试证据边界"},
+        )
+        assert created.status_code == 201
+        system_id = created.json()["id"]
+        node = client.post(
+            f"/api/systems/{system_id}/nodes",
+            json={"label": "已知阶层", "segment_id": segment["id"], "evidence_quote": quote, "effective_from_segment": 0},
+        )
+        assert node.status_code == 201
+        node_id = node.json()["id"]
+        assert client.post(f"/api/systems/{system_id}/nodes", json={"label": "无证据节点"}).status_code == 422
+        second = client.post(
+            f"/api/systems/{system_id}/nodes",
+            json={"label": "并列阶层", "segment_id": segment["id"], "evidence_quote": quote, "effective_from_segment": 0},
+        )
+        assert second.status_code == 201
+        relation = client.post(
+            f"/api/systems/{system_id}/relations",
+            json={
+                "source_node_id": node_id, "target_node_id": second.json()["id"], "relation_type": "related",
+                "segment_id": segment["id"], "evidence_quote": quote,
+            },
+        )
+        assert relation.status_code == 201
+        relation_id = relation.json()["id"]
+        assert client.patch(f"/api/system-relations/{relation_id}", json={"relation_type": "precedes"}).json()["relation_type"] == "precedes"
+        assert client.delete(f"/api/system-relations/{relation_id}").json()["status"] == "deprecated"
+        assert client.patch(f"/api/system-nodes/{node_id}", json={"description": "人工修订说明"}).json()["description"] == "人工修订说明"
+        systems = client.get(f"/api/books/{book_id}/systems").json()
+        assert systems[0]["nodes"][0]["evidence_id"] is not None
+        event_id = overview["events"][0]["id"]
+        visible = client.get(
+            f"/api/books/{book_id}/story-context/{event_id}", params={"through_segment": 0},
+        )
+        assert visible.status_code == 200
+        assert visible.json()["through_segment"] == 0
+        hidden_event_id = overview["events"][-1]["id"]
+        hidden = client.get(
+            f"/api/books/{book_id}/story-context/{hidden_event_id}", params={"through_segment": 0},
+        )
+        assert hidden.status_code == 404
+        assert client.delete(f"/api/system-nodes/{node_id}").json()["status"] == "deprecated"
+        assert client.delete(f"/api/systems/{system_id}").json()["status"] == "archived"
+
+
+def test_v29_ui_issue_ledger_is_actionable_and_verifiable(tmp_path: Path) -> None:
+    """Visual defects keep reproduction, acceptance, regression, and closure evidence together."""
+
+    with client_for(tmp_path) as client:
+        created = client.post(
+            "/api/ui-issues",
+            json={
+                "page_key": "atlas-3d", "viewport": "1366x768@125%", "severity": "high",
+                "summary": "区域标签超出画布", "reproduction": "打开真实长篇并切换 3D",
+                "acceptance": "全部标签可恢复到画布范围", "regression_test": "tests/e2e_ui.spec.js",
+            },
+        )
+        assert created.status_code == 201
+        issue_id = created.json()["id"]
+        assert client.get("/api/ui-issues", params={"status": "open"}).json()[0]["id"] == issue_id
+        verified = client.patch(f"/api/ui-issues/{issue_id}", json={"status": "verified"})
+        assert verified.status_code == 200
+        assert verified.json()["closed_at"] is not None
+
+
+def test_v29_cost_forecast_separates_median_ceiling_and_cache(tmp_path: Path) -> None:
+    """Forecasts expose confidence and never mix the median with the hard ceiling."""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        forecast = client.get(
+            f"/api/books/{book_id}/cost-forecast",
+            params={"provider": "mock", "start_segment": 0, "review_mode": "local"},
+        )
+        assert forecast.status_code == 200
+        body = forecast.json()
+        assert body["forecast_version"] == "cost-forecast-v2"
+        assert body["confidence"] in {"low", "medium", "high"}
+        assert body["conservative_input_tokens"] >= body["median_input_tokens"]
+        assert body["conservative_output_tokens"] >= body["median_output_tokens"]
+        assert body["pending_segments"] + body["exact_cache_segments"] == body["total_segments"]
+
+
 def test_v27_derived_views_share_spoiler_boundary(tmp_path: Path) -> None:
     """地图和叙事记忆不能比总览提前暴露后文地点、事件或人物状态。"""
 
@@ -172,6 +330,9 @@ def test_v27_large_world_is_split_into_non_geographic_semantic_regions(tmp_path:
         assert len(atlas["regions"]) >= 3
         assert all(item["formal_geography"] is False for item in atlas["regions"])
         assert all(item["kind"] == "topological_cluster" for item in atlas["regions"])
+        assert all(item["boundary_kind"] == "semantic" for item in atlas["regions"])
+        assert all(isinstance(item["centroid"]["x"], (int, float)) for item in atlas["regions"])
+        assert all(isinstance(item["node_ids"], list) and item["node_ids"] for item in atlas["regions"])
 
 
 def test_v27_knowledge_crud_requires_exact_quote_for_original_fact(tmp_path: Path) -> None:

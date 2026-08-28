@@ -17,6 +17,7 @@ from app.models import ConnectivityAuditDecision, ConnectivityAuditResult
 from app.pipeline import add_evidence, find_quote
 from app.pricing import calculate_cost_usd, pricing_for
 from app.providers import Provider, ProviderError
+from app.relations import normalize_relation_semantics
 
 
 QUALITY_AUDIT_VERSION = "connectivity-audit-v2-shared-windows"
@@ -243,15 +244,16 @@ def repair_explicit_named_relations(connection: sqlite3.Connection, book_id: int
                 )
             if other_id == entity_id:
                 continue
+            directionality, reverse_predicate = normalize_relation_semantics(predicate)
             connection.execute(
                 """
                 INSERT OR IGNORE INTO claims(
-                    book_id, source_entity_id, target_entity_id, predicate, summary,
-                    confidence, status, first_segment, created_by
-                ) VALUES (?, ?, ?, ?, ?, 1, 'accepted', ?, 'quality_review')
+                    book_id, source_entity_id, target_entity_id, predicate, directionality,
+                    reverse_predicate, summary, confidence, status, first_segment, created_by
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'accepted', ?, 'quality_review')
                 """,
                 (
-                    book_id, entity_id, other_id, predicate,
+                    book_id, entity_id, other_id, predicate, directionality, reverse_predicate,
                     f"原文明确记载{subject_name}是{other_name}的{predicate}。",
                     int(row["ordinal"]),
                 ),
@@ -738,15 +740,19 @@ def _persist_audit_decisions(
                     or find_quote(str(segment["text"]), relation.evidence_quote) is None
                 ):
                     continue
+                directionality, reverse_predicate = normalize_relation_semantics(
+                    relation.predicate, relation.directionality, relation.reverse_predicate,
+                )
                 connection.execute(
                     """
                     INSERT OR IGNORE INTO claims(
-                        book_id, source_entity_id, target_entity_id, predicate, summary,
-                        confidence, status, first_segment, created_by
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'accepted', ?, 'quality_review')
+                        book_id, source_entity_id, target_entity_id, predicate, directionality,
+                        reverse_predicate, summary, confidence, status, first_segment, created_by
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?, 'quality_review')
                     """,
                     (
-                        book_id, source_id, target_id, relation.predicate, relation.summary,
+                        book_id, source_id, target_id, relation.predicate, directionality,
+                        reverse_predicate, relation.summary,
                         relation.confidence, int(segment["ordinal"]),
                     ),
                 )

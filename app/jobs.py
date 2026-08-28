@@ -20,6 +20,7 @@ from app.cost_control import (
     adaptive_budget_limits,
     actual_usage_fits_budget,
     estimate_job_usage,
+    forecast_job_usage,
     estimate_segment_tokens,
     next_call_fits_budget,
     request_hash,
@@ -314,8 +315,9 @@ def estimate_job(
     start_segment: int,
     end_segment: int | None,
     review_mode: str,
+    reanalyze: bool = False,
 ) -> dict[str, Any]:
-    """在创建任务前返回不产生模型调用的保守用量预估。"""
+    """Return a calibrated median and a separate conservative ceiling."""
 
     provider = create_provider(settings, provider_name, book_id)
     pricing = pricing_for(provider.name, provider.model)
@@ -327,20 +329,28 @@ def estimate_job(
         end = last_ordinal if end_segment is None else min(end_segment, last_ordinal)
         if start_segment > end:
             raise ValueError("分析起点已经超过书籍末尾。")
-        estimate = estimate_job_usage(connection, book_id, start_segment, end, pricing, review_mode)
+        prompt_version = provider.prompt_version("extraction", PROMPT_VERSION, SYSTEM_PROMPT)
+        result = forecast_job_usage(
+            connection,
+            book_id,
+            start_segment,
+            end,
+            pricing,
+            review_mode,
+            provider=provider.name,
+            model=provider.model,
+            prompt_version=prompt_version,
+            reanalyze=reanalyze,
+        )
+    # Compatibility fields remain for one candidate-version cycle.
     return {
-        "provider": provider.name,
-        "model": provider.model,
-        "start_segment": start_segment,
-        "end_segment": end,
-        "segment_count": estimate.segment_count,
-        "estimated_input_tokens": estimate.input_tokens,
-        "estimated_output_tokens": estimate.output_tokens,
-        "estimated_cost_usd": estimate.estimated_cost_usd,
-        "pricing_available": pricing.available,
-        "pricing_source": pricing.source,
+        **result,
+        "segment_count": result["pending_segments"],
+        "estimated_input_tokens": result["conservative_input_tokens"],
+        "estimated_output_tokens": result["conservative_output_tokens"],
+        "estimated_cost_usd": result["conservative_cost_usd"],
         "review_mode": review_mode,
-        "estimate_kind": "conservative_upper_bound",
+        "estimate_kind": "calibrated_forecast_with_conservative_ceiling",
     }
 
 

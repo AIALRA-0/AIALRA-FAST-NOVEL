@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "policy": "local_public_domain_full_text_not_committed",
+  "works": [
+    {
+      "id": "gutenberg-23962",
+      "title": "西游记",
+      "local_filename": "pg23962-xiyouji.txt",
+      "source_url": "https://www.gutenberg.org/ebooks/23962",
+      "focus": ["长行程", "地域包含", "编年播放"],
+      "expected_segments": 203
+    },
+    {
+      "id": "gutenberg-24264",
+      "title": "红楼梦",
+      "local_filename": "pg24264-hongloumeng.txt",
+      "source_url": "https://www.gutenberg.org/ebooks/24264",
+      "focus": ["家族", "父母", "婚姻", "别名", "密集人物关系"],
+      "expected_segments": 328
+    },
+    {
+      "id": "gutenberg-23863",
+      "title": "水浒传",
+      "local_filename": "pg23863-shuihuzhuan.txt",
+      "source_url": "https://www.gutenberg.org/ebooks/23863",
+      "focus": ["群像", "势力归属", "大规模关系"],
+      "expected_segments": 155
+    },
+    {
+      "id": "gutenberg-23950",
+      "title": "三国演义",
+      "local_filename": "pg23950-sanguo.txt",
+      "source_url": "https://www.gutenberg.org/ebooks/23950",
+      "focus": ["联盟", "敌对", "主从变化", "多线行程"],
+      "expected_segments": 211
+    },
+    {
+      "id": "gutenberg-51828",
+      "title": "聊斋志异",
+      "local_filename": "pg51828-liaozhai.txt",
+      "source_url": "https://www.gutenberg.org/ebooks/51828",
+      "focus": ["短篇合集", "故事边界", "书库分类"],
+      "expected_segments": 114
+    }
+  ]
+}

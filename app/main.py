@@ -49,6 +49,7 @@ from app.knowledge import (
     sync_knowledge_projection,
 )
 from app.narrative import narrative_memory_payload
+from app.systems import story_knowledge_context, systems_payload
 from app.jobs import (
     PROMPT_VERSION,
     AnalysisJobManager,
@@ -61,6 +62,7 @@ from app.jobs import (
     update_job_budget,
 )
 from app.library import list_book_updates, preview_book_update, resolve_book_update
+from app.relations import normalize_relation_semantics
 from app.models import (
     AnalysisBudgetPatch,
     BenchmarkCandidateResolve,
@@ -90,6 +92,7 @@ from app.models import (
     LibraryFolderRequest,
     KnowledgeClaimCreate,
     KnowledgeClaimPatch,
+    KnowledgeCompleteRequest,
     ProviderKeyRequest,
     PromptDraftCreate,
     PromptTrialRequest,
@@ -100,6 +103,14 @@ from app.models import (
     DomainRuleCreate,
     DomainRulePatch,
     WorldNoteCreate,
+    SystemCreate,
+    SystemPatch,
+    SystemNodeCreate,
+    SystemNodePatch,
+    SystemRelationCreate,
+    SystemRelationPatch,
+    UiIssueCreate,
+    UiIssuePatch,
 )
 from app.pipeline import add_evidence, analyze_book, find_quote, recover_cached_extractions
 from app.pricing import calculate_cost_usd, pricing_for
@@ -181,7 +192,7 @@ async def lifespan(_: FastAPI):
         job_manager = None
 
 
-app = FastAPI(title="小说证据图谱", version="2.7.0", lifespan=lifespan)
+app = FastAPI(title="小说证据图谱", version="2.9.0-rc.1", lifespan=lifespan)
 
 
 def rows(items: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -714,6 +725,26 @@ def estimate_analysis_job(book_id: int, request: AnalysisJobRequest) -> dict[str
             request.start_segment,
             request.end_segment,
             request.review_mode,
+            request.reanalyze,
+        )
+    except (ProviderError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/books/{book_id}/cost-forecast")
+def cost_forecast(
+    book_id: int,
+    provider: str = Query(default="auto", pattern="^(mock|deepseek|moonshot|codex_luna|auto)$"),
+    start_segment: int = Query(default=0, ge=0),
+    end_segment: int | None = Query(default=None, ge=0),
+    review_mode: str = Query(default="local", pattern="^(local|full)$"),
+    reanalyze: bool = False,
+) -> dict[str, Any]:
+    """Expose the same calibrated forecast used by the analysis confirmation dialog."""
+
+    try:
+        return estimate_job(
+            settings, book_id, provider, start_segment, end_segment, review_mode, reanalyze,
         )
     except (ProviderError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -3036,16 +3067,19 @@ def create_connectivity_relation(review_id: int, request: ConnectivityLinkCreate
         ).fetchone()
         if segment is None or find_quote(str(segment["text"]), request.evidence_quote) is None:
             raise HTTPException(status_code=422, detail="逐字引文不在所选原文片段中。")
+        directionality, reverse_predicate = normalize_relation_semantics(
+            request.predicate, request.directionality, request.reverse_predicate,
+        )
         connection.execute(
             """
             INSERT OR IGNORE INTO claims(
-                book_id, source_entity_id, target_entity_id, predicate, summary,
-                confidence, status, first_segment, created_by
-            ) VALUES (?, ?, ?, ?, ?, 1, 'accepted', ?, 'human')
+                book_id, source_entity_id, target_entity_id, predicate, directionality,
+                reverse_predicate, summary, confidence, status, first_segment, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'accepted', ?, 'human')
             """,
             (
                 review["book_id"], review["entity_id"], target["id"], request.predicate.strip(),
-                request.summary.strip(), segment["ordinal"],
+                directionality, reverse_predicate, request.summary.strip(), segment["ordinal"],
             ),
         )
         claim = connection.execute(
@@ -3628,6 +3662,8 @@ def backup_database() -> FileResponse:
 def map_layout(
     book_id: int,
     through_segment: int | None = Query(default=None, ge=0),
+    detail_level: str = Query(default="high", pattern="^(low|medium|high)$"),
+    focus: str = Query(default="", max_length=120),
 ) -> dict[str, Any]:
     """返回基于证据约束和稳定拓扑的 2D/3D 共用布局。"""
 
@@ -3637,7 +3673,10 @@ def map_layout(
             if through_segment is not None:
                 book = ensure_book(connection, book_id)
                 through_segment = min(through_segment, max(0, int(book["segment_count"]) - 1))
-            return build_map_layout_snapshot(connection, book_id, through_segment)
+            payload = build_map_layout_snapshot(connection, book_id, through_segment)
+            payload["requested_detail_level"] = detail_level
+            payload["requested_focus"] = focus
+            return payload
 
 
 @app.get("/api/books/{book_id}/narrative-memory")
@@ -4040,6 +4079,11 @@ def patch_claim(claim_id: int, patch: ClaimPatch) -> dict[str, Any]:
         if claim is None:
             raise HTTPException(status_code=404, detail="找不到关系事实。")
         new_summary = patch.summary or claim["summary"]
+        requested_direction = patch.directionality or str(claim["directionality"])
+        requested_reverse = patch.reverse_predicate if patch.reverse_predicate is not None else claim["reverse_predicate"]
+        new_direction, new_reverse = normalize_relation_semantics(
+            str(claim["predicate"]), requested_direction, requested_reverse,
+        )
         if new_summary != claim["summary"]:
             connection.execute(
                 """
@@ -4056,15 +4100,435 @@ def patch_claim(claim_id: int, patch: ClaimPatch) -> dict[str, Any]:
                 """,
                 (claim["book_id"], claim_id, claim["status"], patch.status, patch.reason),
             )
-        connection.execute("UPDATE claims SET status = ?, summary = ? WHERE id = ?", (patch.status, new_summary, claim_id))
-    return {"id": claim_id, "status": patch.status, "summary": new_summary}
+        for field_name, old_value, new_value in (
+            ("directionality", claim["directionality"], new_direction),
+            ("reverse_predicate", claim["reverse_predicate"] or "", new_reverse or ""),
+        ):
+            if str(old_value or "") != str(new_value or ""):
+                connection.execute(
+                    """
+                    INSERT INTO corrections(book_id, target_type, target_id, field_name, old_value, new_value, reason)
+                    VALUES (?, 'claim', ?, ?, ?, ?, ?)
+                    """,
+                    (claim["book_id"], claim_id, field_name, old_value or "", new_value or "", patch.reason),
+                )
+        connection.execute(
+            """
+            UPDATE claims SET status = ?, summary = ?, directionality = ?, reverse_predicate = ?
+            WHERE id = ?
+            """,
+            (patch.status, new_summary, new_direction, new_reverse, claim_id),
+        )
+    return {
+        "id": claim_id,
+        "status": patch.status,
+        "summary": new_summary,
+        "directionality": new_direction,
+        "reverse_predicate": new_reverse,
+    }
+
+
+@app.get("/api/books/{book_id}/systems")
+def list_systems(book_id: int) -> list[dict[str, Any]]:
+    """Return every evidence-bounded hierarchy, order, or network in one book."""
+
+    with transaction(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        return systems_payload(connection, book_id)
+
+
+@app.post("/api/books/{book_id}/systems", status_code=201)
+def create_system(book_id: int, request: SystemCreate) -> dict[str, Any]:
+    """Create a system shell; an empty system does not assert a fictional hierarchy."""
+
+    with transaction(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        try:
+            cursor = connection.execute(
+                """
+                INSERT INTO world_systems(book_id, name, category, structure_type, description)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (book_id, request.name, request.category, request.structure_type, request.description),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(status_code=409, detail="同类体系中已经存在这个名称") from exc
+        system_id = int(cursor.lastrowid)
+        return next(item for item in systems_payload(connection, book_id) if int(item["id"]) == system_id)
+
+
+@app.patch("/api/systems/{system_id}")
+def patch_system(system_id: int, request: SystemPatch) -> dict[str, Any]:
+    """Edit or archive a system without deleting its nodes and evidence."""
+
+    with transaction(settings.database_path) as connection:
+        system = connection.execute("SELECT * FROM world_systems WHERE id = ?", (system_id,)).fetchone()
+        if system is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系")
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key in ("name", "category", "structure_type", "description", "status"):
+            value = getattr(request, key)
+            if value is not None:
+                assignments.append(f"{key} = ?")
+                values.append(value)
+        if assignments:
+            connection.execute(
+                f"UPDATE world_systems SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # noqa: S608
+                (*values, system_id),
+            )
+        return next(item for item in systems_payload(connection, int(system["book_id"])) if int(item["id"]) == system_id)
+
+
+@app.delete("/api/systems/{system_id}")
+def archive_system(system_id: int) -> dict[str, Any]:
+    """Archive a system while preserving its evidence and revision history."""
+
+    with transaction(settings.database_path) as connection:
+        system = connection.execute("SELECT * FROM world_systems WHERE id = ?", (system_id,)).fetchone()
+        if system is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系")
+        connection.execute(
+            "UPDATE world_systems SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (system_id,),
+        )
+        return {"id": system_id, "status": "archived"}
+
+
+def _validated_segment_quote(
+    connection: sqlite3.Connection,
+    book_id: int,
+    segment_id: int | None,
+    quote: str,
+) -> sqlite3.Row | None:
+    if segment_id is None and not quote.strip():
+        return None
+    if segment_id is None or not quote.strip():
+        raise HTTPException(status_code=422, detail="原文证据必须同时包含章节和逐字引文")
+    segment = connection.execute(
+        "SELECT * FROM segments WHERE id = ? AND book_id = ?", (segment_id, book_id),
+    ).fetchone()
+    if segment is None or find_quote(str(segment["text"]), quote) is None:
+        raise HTTPException(status_code=422, detail="引文无法在指定章节逐字找到")
+    return segment
+
+
+@app.post("/api/systems/{system_id}/nodes", status_code=201)
+def create_system_node(system_id: int, request: SystemNodeCreate) -> dict[str, Any]:
+    """Add a system node and bind its literal evidence when provided."""
+
+    with transaction(settings.database_path) as connection:
+        system = connection.execute("SELECT * FROM world_systems WHERE id = ?", (system_id,)).fetchone()
+        if system is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系")
+        book_id = int(system["book_id"])
+        segment = _validated_segment_quote(connection, book_id, request.segment_id, request.evidence_quote)
+        if segment is None:
+            raise HTTPException(status_code=422, detail="体系节点必须绑定逐字原文证据")
+        cursor = connection.execute(
+            """
+            INSERT INTO world_system_nodes(
+                system_id, label, description, rank_value, concept_id,
+                effective_from_segment, effective_to_segment, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                system_id, request.label, request.description, request.rank_value, request.concept_id,
+                request.effective_from_segment, request.effective_to_segment, request.confidence,
+            ),
+        )
+        node_id = int(cursor.lastrowid)
+        if segment is not None and request.segment_id is not None:
+            add_evidence(
+                connection, book_id, "system_node", node_id, request.segment_id,
+                str(segment["text"]), request.evidence_quote,
+            )
+            evidence = connection.execute(
+                "SELECT id FROM evidence WHERE target_type = 'system_node' AND target_id = ? ORDER BY id DESC LIMIT 1",
+                (node_id,),
+            ).fetchone()
+            if evidence is not None:
+                connection.execute("UPDATE world_system_nodes SET evidence_id = ? WHERE id = ?", (int(evidence["id"]), node_id))
+        return next(
+            node for item in systems_payload(connection, book_id) if int(item["id"]) == system_id
+            for node in item["nodes"] if int(node["id"]) == node_id
+        )
+
+
+@app.patch("/api/system-nodes/{node_id}")
+def patch_system_node(node_id: int, request: SystemNodePatch) -> dict[str, Any]:
+    """Edit a node without changing its bound source evidence."""
+
+    with transaction(settings.database_path) as connection:
+        node = connection.execute(
+            "SELECT node.*, system.book_id FROM world_system_nodes node JOIN world_systems system ON system.id = node.system_id WHERE node.id = ?",
+            (node_id,),
+        ).fetchone()
+        if node is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系节点")
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key in ("label", "description", "effective_from_segment", "effective_to_segment", "status"):
+            value = getattr(request, key)
+            if value is not None:
+                assignments.append(f"{key} = ?")
+                values.append(value)
+        if request.clear_rank:
+            assignments.append("rank_value = NULL")
+        elif request.rank_value is not None:
+            assignments.append("rank_value = ?")
+            values.append(request.rank_value)
+        if assignments:
+            connection.execute(
+                f"UPDATE world_system_nodes SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # noqa: S608
+                (*values, node_id),
+            )
+        return next(
+            item for system in systems_payload(connection, int(node["book_id"])) if int(system["id"]) == int(node["system_id"])
+            for item in system["nodes"] if int(item["id"]) == node_id
+        )
+
+
+@app.delete("/api/system-nodes/{node_id}")
+def archive_system_node(node_id: int) -> dict[str, Any]:
+    """Archive a node and its visible edges without deleting historical evidence."""
+
+    with transaction(settings.database_path) as connection:
+        node = connection.execute("SELECT * FROM world_system_nodes WHERE id = ?", (node_id,)).fetchone()
+        if node is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系节点")
+        connection.execute("UPDATE world_system_nodes SET status = 'deprecated', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (node_id,))
+        connection.execute("UPDATE world_system_relations SET status = 'deprecated', updated_at = CURRENT_TIMESTAMP WHERE source_node_id = ? OR target_node_id = ?", (node_id, node_id))
+        return {"id": node_id, "status": "deprecated"}
+
+
+@app.post("/api/systems/{system_id}/relations", status_code=201)
+def create_system_relation(system_id: int, request: SystemRelationCreate) -> dict[str, Any]:
+    """Add a supported comparison or hierarchy edge; unsupported ordering remains incomparable."""
+
+    with transaction(settings.database_path) as connection:
+        system = connection.execute("SELECT * FROM world_systems WHERE id = ?", (system_id,)).fetchone()
+        if system is None:
+            raise HTTPException(status_code=404, detail="找不到这个体系")
+        book_id = int(system["book_id"])
+        endpoints = connection.execute(
+            "SELECT COUNT(*) AS count FROM world_system_nodes WHERE system_id = ? AND id IN (?, ?)",
+            (system_id, request.source_node_id, request.target_node_id),
+        ).fetchone()
+        if int(endpoints["count"] or 0) != 2:
+            raise HTTPException(status_code=422, detail="关系两端必须属于同一个体系")
+        segment = _validated_segment_quote(connection, book_id, request.segment_id, request.evidence_quote)
+        if segment is None:
+            raise HTTPException(status_code=422, detail="体系关系必须绑定逐字原文证据")
+        cursor = connection.execute(
+            """
+            INSERT INTO world_system_relations(
+                system_id, source_node_id, target_node_id, relation_type, confidence
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (system_id, request.source_node_id, request.target_node_id, request.relation_type, request.confidence),
+        )
+        relation_id = int(cursor.lastrowid)
+        if segment is not None and request.segment_id is not None:
+            add_evidence(
+                connection, book_id, "system_relation", relation_id, request.segment_id,
+                str(segment["text"]), request.evidence_quote,
+            )
+            evidence = connection.execute(
+                "SELECT id FROM evidence WHERE target_type = 'system_relation' AND target_id = ? ORDER BY id DESC LIMIT 1",
+                (relation_id,),
+            ).fetchone()
+            if evidence is not None:
+                connection.execute(
+                    "UPDATE world_system_relations SET evidence_id = ? WHERE id = ?",
+                    (int(evidence["id"]), relation_id),
+                )
+        return next(
+            relation for item in systems_payload(connection, book_id) if int(item["id"]) == system_id
+            for relation in item["relations"] if int(relation["id"]) == relation_id
+        )
+
+
+@app.patch("/api/system-relations/{relation_id}")
+def patch_system_relation(relation_id: int, request: SystemRelationPatch) -> dict[str, Any]:
+    """Edit an edge while keeping its literal evidence binding."""
+
+    with transaction(settings.database_path) as connection:
+        relation = connection.execute(
+            "SELECT relation.*, system.book_id FROM world_system_relations relation JOIN world_systems system ON system.id = relation.system_id WHERE relation.id = ?",
+            (relation_id,),
+        ).fetchone()
+        if relation is None:
+            raise HTTPException(status_code=404, detail="找不到这条体系关系")
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key in ("relation_type", "confidence", "status"):
+            value = getattr(request, key)
+            if value is not None:
+                assignments.append(f"{key} = ?")
+                values.append(value)
+        if assignments:
+            connection.execute(
+                f"UPDATE world_system_relations SET {', '.join(assignments)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",  # noqa: S608
+                (*values, relation_id),
+            )
+        return next(
+            item for system in systems_payload(connection, int(relation["book_id"])) if int(system["id"]) == int(relation["system_id"])
+            for item in system["relations"] if int(item["id"]) == relation_id
+        )
+
+
+@app.delete("/api/system-relations/{relation_id}")
+def archive_system_relation(relation_id: int) -> dict[str, Any]:
+    """Archive one edge without erasing its evidence."""
+
+    with transaction(settings.database_path) as connection:
+        relation = connection.execute("SELECT * FROM world_system_relations WHERE id = ?", (relation_id,)).fetchone()
+        if relation is None:
+            raise HTTPException(status_code=404, detail="找不到这条体系关系")
+        connection.execute("UPDATE world_system_relations SET status = 'deprecated', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (relation_id,))
+        return {"id": relation_id, "status": "deprecated"}
+
+
+@app.get("/api/books/{book_id}/story-context/{event_id}")
+def story_context(
+    book_id: int,
+    event_id: int,
+    through_segment: int = Query(ge=0),
+) -> dict[str, Any]:
+    """Return a zero-call knowledge capsule constrained by the spoiler boundary."""
+
+    with connect(settings.database_path) as connection:
+        book = ensure_book(connection, book_id)
+        boundary = min(through_segment, max(0, int(book["segment_count"]) - 1))
+        try:
+            return story_knowledge_context(connection, book_id, event_id, boundary)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/books/{book_id}/knowledge/complete", status_code=202)
+def complete_knowledge(book_id: int, request: KnowledgeCompleteRequest) -> dict[str, Any]:
+    """Build a reviewable, local-first completion candidate without silently asserting facts."""
+
+    with transaction(settings.database_path) as connection:
+        ensure_book(connection, book_id)
+        segment_ids = request.segment_ids
+        if request.concept_id is not None:
+            concept = connection.execute(
+                "SELECT * FROM concepts WHERE id = ? AND book_id = ?", (request.concept_id, book_id),
+            ).fetchone()
+            if concept is None:
+                raise HTTPException(status_code=422, detail="知识概念不属于当前书籍")
+        if not segment_ids:
+            segment_ids = [int(row["id"]) for row in connection.execute(
+                "SELECT id FROM segments WHERE book_id = ? ORDER BY ordinal LIMIT 12", (book_id,),
+            )]
+        marks = ",".join("?" for _ in segment_ids) or "NULL"
+        rows = connection.execute(
+            f"SELECT id, ordinal, chapter_title, text FROM segments WHERE book_id = ? AND id IN ({marks}) ORDER BY ordinal",  # noqa: S608
+            (book_id, *segment_ids),
+        ).fetchall()
+        label = str(concept["preferred_label"]) if request.concept_id is not None else ""
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            text_value = str(row["text"])
+            if label and label not in text_value:
+                continue
+            index = text_value.find(label) if label else 0
+            start = max(0, index - 90)
+            quote = text_value[start:start + 260].strip()
+            if quote:
+                candidates.append({
+                    "segment_id": int(row["id"]), "ordinal": int(row["ordinal"]),
+                    "chapter_title": str(row["chapter_title"]), "evidence_quote": quote,
+                })
+            if len(candidates) >= 8:
+                break
+        cursor = connection.execute(
+            """
+            INSERT INTO knowledge_completion_requests(
+                book_id, concept_id, instruction, segment_ids_json, status, result_json
+            ) VALUES (?, ?, ?, ?, 'candidate_ready', ?)
+            """,
+            (
+                book_id, request.concept_id, request.instruction,
+                json.dumps(segment_ids, ensure_ascii=False),
+                json.dumps({"candidates": candidates, "provider": request.provider}, ensure_ascii=False),
+            ),
+        )
+        return {
+            "id": int(cursor.lastrowid), "status": "candidate_ready", "candidates": candidates,
+            "message": "候选引文已经整理，只有人工确认或模型结构化复核后才会写入正式事实",
+        }
+
+
+@app.get("/api/ui-issues")
+def list_ui_issues(status: str | None = None) -> list[dict[str, Any]]:
+    """Return the local visual acceptance ledger without exposing screenshot files."""
+
+    with connect(settings.database_path) as connection:
+        query = "SELECT * FROM ui_issues"
+        parameters: tuple[Any, ...] = ()
+        if status:
+            query += " WHERE status = ?"
+            parameters = (status,)
+        query += " ORDER BY CASE severity WHEN 'blocker' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, id DESC"
+        return rows(connection.execute(query, parameters).fetchall())
+
+
+@app.post("/api/ui-issues", status_code=201)
+def create_ui_issue(request: UiIssueCreate) -> dict[str, Any]:
+    """Add one reproducible interface issue to the release ledger."""
+
+    with transaction(settings.database_path) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO ui_issues(
+                page_key, viewport, severity, summary, reproduction,
+                acceptance, screenshot_path, regression_test
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request.page_key, request.viewport, request.severity, request.summary,
+                request.reproduction, request.acceptance, request.screenshot_path, request.regression_test,
+            ),
+        )
+        return dict(connection.execute("SELECT * FROM ui_issues WHERE id = ?", (int(cursor.lastrowid),)).fetchone())
+
+
+@app.patch("/api/ui-issues/{issue_id}")
+def patch_ui_issue(issue_id: int, request: UiIssuePatch) -> dict[str, Any]:
+    """Update or verify one interface issue for the release gate."""
+
+    with transaction(settings.database_path) as connection:
+        issue = connection.execute("SELECT * FROM ui_issues WHERE id = ?", (issue_id,)).fetchone()
+        if issue is None:
+            raise HTTPException(status_code=404, detail="找不到这条界面问题")
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key in ("severity", "summary", "reproduction", "acceptance", "screenshot_path", "regression_test", "status"):
+            value = getattr(request, key)
+            if value is not None:
+                assignments.append(f"{key} = ?")
+                values.append(value)
+        if request.status in {"fixed", "verified", "wont_fix"}:
+            assignments.append("closed_at = CURRENT_TIMESTAMP")
+        elif request.status == "open":
+            assignments.append("closed_at = NULL")
+        if assignments:
+            connection.execute(
+                f"UPDATE ui_issues SET {', '.join(assignments)} WHERE id = ?",  # noqa: S608
+                (*values, issue_id),
+            )
+        return dict(connection.execute("SELECT * FROM ui_issues WHERE id = ?", (issue_id,)).fetchone())
 
 
 @app.get("/healthz", include_in_schema=False)
 def health() -> dict[str, str]:
     """供本机容器与反向代理检查进程状态，不返回书库或模型信息。"""
 
-    return {"status": "ok", "version": "2.7.0"}
+    return {"status": "ok", "version": "2.9.0-rc.1"}
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -4073,7 +4537,7 @@ def ready() -> dict[str, str]:
 
     with connect(settings.database_path) as connection:
         connection.execute("SELECT 1").fetchone()
-    return {"status": "ready", "version": "2.7.0"}
+    return {"status": "ready", "version": "2.9.0-rc.1"}
 
 
 @app.get("/")

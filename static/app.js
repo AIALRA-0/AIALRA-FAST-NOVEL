@@ -24,6 +24,7 @@ const state = {
   narrativeMemory: null,
   knowledgeFacets: null,
   concepts: [],
+  systems: [],
   mapStep: 0,
   mapTimer: null,
   mapPlaybackState: "idle",
@@ -37,13 +38,19 @@ const state = {
   mapGraph: null,
   mapGraphResizeObserver: null,
   mapLabelFrame: null,
+  mapRegionFrame: null,
+  map3DRegionGroup: null,
   map3DActor: null,
   map3DNodes: null,
   map3DLinks: null,
+  mapRailTab: "chronology",
+  mapChronologyCenter: 0,
+  storyContextSerial: 0,
   inspectorTarget: null,
   inspectorRequestSerial: 0,
   analysisEstimate: null,
   analysisStartSegment: 0,
+  qualityTab: "pending",
   budgetJobId: null,
   benchmarks: [],
   benchmarkCandidates: [],
@@ -51,6 +58,17 @@ const state = {
   controlPlane: null,
   controlPlaneBookId: null,
   promptDetail: null,
+  viewBeforeLibrary: "relationships",
+  libraryFolderId: "all",
+  libraryBookId: null,
+  libraryQuery: "",
+  libraryEditingFolderId: null,
+  libraryEditingBookId: null,
+  dialogReturnFocus: new Map(),
+  confirmResolver: null,
+  formResolver: null,
+  activeSelectBox: null,
+  selectEnhanceFrame: null,
 };
 
 const labels = {
@@ -59,8 +77,10 @@ const labels = {
   map: ["逻辑地图", "地点、交通方式与主线人物的行动路径"],
   world: ["世界信息", "规则、力量、势力、背景与地理结构"],
   database: ["条目数据库", "可批量检索的物品、技能、属性、参数与术语"],
+  systems: ["体系图谱", "只展示有原文依据的等级、组织、阶层与分类关系"],
   quality: ["质量检查", "查看分析进度、证据覆盖和需要人工确认的问题"],
   collaboration: ["协作控制", "查看提示词、规则、模型路由、验收条件和每次运行"],
+  library: ["书库管理", "用文件夹整理书籍，并查看分析与增量更新状态"],
 };
 
 const transportLabels = {
@@ -111,6 +131,121 @@ const semanticPalette = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
+function closeSelectBox({ restoreFocus = false } = {}) {
+  const active = state.activeSelectBox;
+  if (!active) return;
+  active.popover.remove();
+  active.button.setAttribute("aria-expanded", "false");
+  state.activeSelectBox = null;
+  if (restoreFocus) active.button.focus();
+}
+
+function syncSelectBox(select) {
+  const wrapper = select.closest(".select-box");
+  const button = wrapper?.querySelector(".select-box-button");
+  if (!button) return;
+  const selected = select.selectedOptions[0];
+  button.querySelector(".select-box-value").textContent = selected?.textContent?.trim() || "请选择";
+  button.disabled = select.disabled;
+  button.setAttribute("aria-disabled", String(select.disabled));
+}
+
+function openSelectBox(select, button) {
+  closeSelectBox();
+  const options = [...select.options].filter((option) => !option.hidden);
+  const popover = document.createElement("div");
+  popover.className = "select-popover";
+  popover.setAttribute("role", "listbox");
+  popover.setAttribute("aria-label", select.getAttribute("aria-label") || select.labels?.[0]?.textContent || "选择选项");
+  const searchable = options.length > 8;
+  popover.innerHTML = `${searchable ? '<div class="select-search-wrap"><input class="select-search" type="search" placeholder="搜索选项" aria-label="搜索选项"></div>' : ""}<div class="select-options"></div>`;
+  document.body.appendChild(popover);
+  const optionHost = popover.querySelector(".select-options");
+  const render = (query = "") => {
+    const normalized = query.trim().toLocaleLowerCase();
+    const visible = options.filter((option) => !normalized || option.textContent.toLocaleLowerCase().includes(normalized));
+    optionHost.innerHTML = visible.length ? visible.map((option) => `<button class="select-option${option.selected ? " selected" : ""}" type="button" role="option" aria-selected="${option.selected}" data-value="${escapeHtml(option.value)}" ${option.disabled ? "disabled" : ""}><span>${escapeHtml(option.textContent.trim())}</span>${option.selected ? '<b aria-hidden="true">✓</b>' : ""}</button>`).join("") : '<div class="select-no-results">没有匹配选项</div>';
+    optionHost.querySelectorAll(".select-option").forEach((item) => item.addEventListener("click", () => {
+      select.value = item.dataset.value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      syncSelectBox(select);
+      closeSelectBox({ restoreFocus: true });
+    }));
+  };
+  render();
+  const place = () => {
+    const rect = button.getBoundingClientRect();
+    const width = Math.min(Math.max(rect.width, 220), Math.max(220, window.innerWidth - 24));
+    popover.style.width = `${width}px`;
+    const measuredHeight = Math.min(popover.scrollHeight || 320, Math.max(180, window.innerHeight - 24));
+    const below = window.innerHeight - rect.bottom;
+    const openUp = below < Math.min(320, measuredHeight) && rect.top > below;
+    popover.classList.toggle("opens-up", openUp);
+    popover.style.left = `${Math.max(12, Math.min(window.innerWidth - width - 12, rect.left))}px`;
+    popover.style.maxHeight = `${Math.max(160, openUp ? rect.top - 16 : window.innerHeight - rect.bottom - 16)}px`;
+    if (openUp) {
+      popover.style.top = "auto";
+      popover.style.bottom = `${Math.max(12, window.innerHeight - rect.top + 6)}px`;
+    } else {
+      popover.style.bottom = "auto";
+      popover.style.top = `${Math.min(window.innerHeight - 12, rect.bottom + 6)}px`;
+    }
+  };
+  place();
+  state.activeSelectBox = { select, button, popover, place };
+  button.setAttribute("aria-expanded", "true");
+  const search = popover.querySelector(".select-search");
+  if (search) {
+    search.addEventListener("input", () => render(search.value));
+    search.focus();
+  } else {
+    optionHost.querySelector(".select-option.selected:not(:disabled), .select-option:not(:disabled)")?.focus();
+  }
+}
+
+function enhanceSelect(select) {
+  if (!(select instanceof HTMLSelectElement) || select.dataset.selectBoxReady === "true") {
+    if (select instanceof HTMLSelectElement) syncSelectBox(select);
+    return;
+  }
+  select.dataset.selectBoxReady = "true";
+  const wrapper = document.createElement("div");
+  wrapper.className = `select-box${select.classList.contains("search-input") ? " select-box-search" : ""}`;
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(select);
+  select.classList.add("select-native");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "select-box-button";
+  button.setAttribute("aria-haspopup", "listbox");
+  button.setAttribute("aria-expanded", "false");
+  button.innerHTML = '<span class="select-box-value"></span><span class="select-box-chevron" aria-hidden="true">⌄</span>';
+  wrapper.appendChild(button);
+  button.addEventListener("click", () => state.activeSelectBox?.select === select ? closeSelectBox() : openSelectBox(select, button));
+  button.addEventListener("keydown", (event) => {
+    if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      openSelectBox(select, button);
+    }
+    if (event.key === "Escape") closeSelectBox({ restoreFocus: true });
+  });
+  select.addEventListener("change", () => syncSelectBox(select));
+  new MutationObserver(() => syncSelectBox(select)).observe(select, { childList: true, subtree: true, attributes: true });
+  syncSelectBox(select);
+}
+
+function enhanceSelects(root = document) {
+  root.querySelectorAll?.("select").forEach(enhanceSelect);
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!state.activeSelectBox) return;
+  if (state.activeSelectBox.popover.contains(event.target) || state.activeSelectBox.button.contains(event.target)) return;
+  closeSelectBox();
+}, true);
+window.addEventListener("resize", () => state.activeSelectBox?.place());
+window.addEventListener("scroll", () => state.activeSelectBox?.place(), true);
+
 // 所有后端文本都先转义，避免导入小说内容成为页面脚本。
 function escapeHtml(value) {
   return String(value ?? "")
@@ -119,6 +254,81 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function openDialog(selector, preferredSelector = ".icon-button") {
+  const dialog = typeof selector === "string" ? $(selector) : selector;
+  if (!dialog) return;
+  state.dialogReturnFocus.set(dialog.id, document.activeElement);
+  dialog.showModal();
+  requestAnimationFrame(() => dialog.querySelector(preferredSelector)?.focus());
+}
+
+function closeDialog(selector) {
+  const dialog = typeof selector === "string" ? $(selector) : selector;
+  if (dialog?.open) dialog.close();
+}
+
+function confirmAction(title, message, confirmLabel = "确认") {
+  const dialog = $("#confirm-dialog");
+  if (!dialog) return Promise.resolve(false);
+  $("#confirm-title").textContent = title;
+  $("#confirm-message").textContent = message;
+  $("#confirm-accept").textContent = confirmLabel;
+  if (state.confirmResolver) state.confirmResolver(false);
+  openDialog(dialog, "#confirm-cancel");
+  return new Promise((resolve) => { state.confirmResolver = resolve; });
+}
+
+function finishConfirmation(accepted) {
+  const resolve = state.confirmResolver;
+  state.confirmResolver = null;
+  closeDialog("#confirm-dialog");
+  resolve?.(accepted);
+}
+
+function formAction({ title, description = "", submitLabel = "保存", fields = [] }) {
+  const dialog = $("#form-dialog");
+  if (!dialog) return Promise.resolve(null);
+  if (state.formResolver) state.formResolver(null);
+  $("#form-dialog-title").textContent = title;
+  $("#form-dialog-description").textContent = description;
+  $("#form-dialog-submit").textContent = submitLabel;
+  $("#form-dialog-fields").innerHTML = fields.map((field) => {
+    const attributes = `${field.required ? " required" : ""}${field.placeholder ? ` placeholder="${escapeHtml(field.placeholder)}"` : ""}`;
+    if (field.type === "select") {
+      const options = (field.options || []).map((option) => `<option value="${escapeHtml(option.value)}"${String(option.value) === String(field.value ?? "") ? " selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
+      return `<label>${escapeHtml(field.label)}<select name="${escapeHtml(field.name)}"${field.required ? " required" : ""}>${options}</select>${field.hint ? `<small>${escapeHtml(field.hint)}</small>` : ""}</label>`;
+    }
+    if (field.type === "textarea") {
+      return `<label>${escapeHtml(field.label)}<textarea name="${escapeHtml(field.name)}" rows="${Number(field.rows || 4)}"${attributes}>${escapeHtml(field.value || "")}</textarea>${field.hint ? `<small>${escapeHtml(field.hint)}</small>` : ""}</label>`;
+    }
+    return `<label>${escapeHtml(field.label)}<input name="${escapeHtml(field.name)}" type="${escapeHtml(field.type || "text")}" value="${escapeHtml(field.value || "")}"${attributes}>${field.hint ? `<small>${escapeHtml(field.hint)}</small>` : ""}</label>`;
+  }).join("");
+  openDialog(dialog, fields[0] ? `[name="${fields[0].name}"]` : "#form-dialog-submit");
+  return new Promise((resolve) => { state.formResolver = resolve; });
+}
+
+function finishFormAction(accepted) {
+  const resolve = state.formResolver;
+  if (!resolve) return;
+  if (!accepted) {
+    state.formResolver = null;
+    closeDialog("#form-dialog");
+    resolve(null);
+    return;
+  }
+  const form = $("#form-dialog-fields");
+  const invalid = form.querySelector(":invalid");
+  if (invalid) {
+    invalid.focus();
+    invalid.reportValidity();
+    return;
+  }
+  const values = Object.fromEntries(new FormData(form).entries());
+  state.formResolver = null;
+  closeDialog("#form-dialog");
+  resolve(values);
 }
 
 // 数据库存储片段序号，页面统一换成可读的真实章节标题。
@@ -165,8 +375,19 @@ function disposeRelationshipGraph() {
 function disposeMapGraph() {
   cancelAnimationFrame(state.mapLabelFrame);
   state.mapLabelFrame = null;
+  cancelAnimationFrame(state.mapRegionFrame);
+  state.mapRegionFrame = null;
   state.mapGraphResizeObserver?.disconnect();
   state.mapGraphResizeObserver = null;
+  if (state.map3DRegionGroup) {
+    state.map3DRegionGroup.traverse?.((object) => {
+      object.geometry?.dispose?.();
+      if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose?.());
+      else object.material?.dispose?.();
+    });
+    state.map3DRegionGroup.parent?.remove?.(state.map3DRegionGroup);
+    state.map3DRegionGroup = null;
+  }
   if (state.mapGraph) {
     state.mapGraph.pauseAnimation?.();
     state.mapGraph._destructor?.();
@@ -176,6 +397,84 @@ function disposeMapGraph() {
   state.map3DNodes = null;
   state.map3DLinks = null;
   state.mapViewportController = null;
+}
+
+function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
+  if (state.mapGraph !== graph || state.mapPresentation !== "atlas") return;
+  const regions = map3DVisibleRegions();
+  const scene = graph.scene?.();
+  if (!scene || !regions.length) return;
+  let sampleMesh = null;
+  scene.traverse?.((object) => {
+    if (!sampleMesh && object.isMesh && object.geometry?.getAttribute?.("position")) sampleMesh = object;
+  });
+  if (!sampleMesh) {
+    if (attempt < 30) requestAnimationFrame(() => installMap3DRegionMeshes(graph, centerX, centerY, attempt + 1));
+    return;
+  }
+  const GroupConstructor = scene.constructor;
+  const MeshConstructor = sampleMesh.constructor;
+  const BufferGeometryConstructor = Object.getPrototypeOf(Object.getPrototypeOf(sampleMesh.geometry))?.constructor;
+  const PositionAttributeConstructor = sampleMesh.geometry.getAttribute("position").constructor;
+  const MaterialConstructor = sampleMesh.material.constructor;
+  if (!GroupConstructor || !MeshConstructor || !BufferGeometryConstructor || !PositionAttributeConstructor || !MaterialConstructor) return;
+  const group = new GroupConstructor();
+  group.name = "novel-atlas-semantic-regions";
+  const palette = [0x7cb5df, 0xb693d0, 0xe2b975, 0x7fc7b7, 0xdc94aa, 0x9ca5dc];
+  let created = 0;
+  regions.forEach((region, regionIndex) => {
+    const hull = (region.hull || []).filter((point) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
+    if (hull.length < 3) return;
+    const vertices = [];
+    const thickness = region.kind === "evidence_containment" ? 8 : 4;
+    hull.forEach((point) => vertices.push((Number(point.x) - centerX) * 0.72, -(Number(point.y) - centerY) * 0.72, 0));
+    hull.forEach((point) => vertices.push((Number(point.x) - centerX) * 0.72, -(Number(point.y) - centerY) * 0.72, thickness));
+    const indices = [];
+    for (let index = 1; index < hull.length - 1; index += 1) {
+      indices.push(0, index + 1, index);
+      indices.push(hull.length, hull.length + index, hull.length + index + 1);
+    }
+    for (let index = 0; index < hull.length; index += 1) {
+      const next = (index + 1) % hull.length;
+      indices.push(index, next, hull.length + next, index, hull.length + next, hull.length + index);
+    }
+    const geometry = new BufferGeometryConstructor();
+    geometry.setAttribute("position", new PositionAttributeConstructor(new Float32Array(vertices), 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals?.();
+    const material = new MaterialConstructor({
+      color: palette[Number(region.palette_index ?? regionIndex) % palette.length],
+      transparent: true,
+      opacity: region.kind === "evidence_containment" ? 0.18 : 0.08,
+      depthWrite: false,
+    });
+    const mesh = new MeshConstructor(geometry, material);
+    mesh.name = `semantic-region:${region.id}`;
+    mesh.position.z = Number(region.containment_depth || 0) * 86 - 24;
+    mesh.renderOrder = -2;
+    mesh.userData = { ...(mesh.userData || {}), regionId: region.id, boundaryKind: "semantic" };
+    group.add(mesh);
+    created += 1;
+  });
+  scene.add(group);
+  state.map3DRegionGroup = group;
+  const host = $("#map-3d");
+  if (host) host.dataset.regionMeshCount = String(created);
+  graph.refresh?.();
+}
+
+function map3DVisibleRegions() {
+  const regions = state.mapLayout?.regions || [];
+  const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
+  const evidenceRegions = regions.filter((region) => region.kind === "evidence_containment");
+  const activeTopology = regions.find((region) =>
+    region.kind === "topological_cluster"
+      && currentLocationId
+      && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId)
+  );
+  if (evidenceRegions.length) return activeTopology ? [...evidenceRegions, activeTopology] : evidenceRegions;
+  if (activeTopology) return [activeTopology];
+  return regions.filter((region) => region.kind === "topological_cluster").slice(0, 1);
 }
 
 function resetMapStateForBook() {
@@ -268,7 +567,7 @@ async function loadOverview(throughSegment = null, silent = false) {
   const requestedBookId = state.bookId;
   if (!silent) $("#view-panel").innerHTML = '<div class="loading">正在整理证据与视图…</div>';
   const query = throughSegment === null ? "" : `?through_segment=${throughSegment}`;
-  const [overview, benchmarks, benchmarkCandidates, mapLayout, narrativeMemory, knowledgeFacets, concepts] = await Promise.all([
+  const [overview, benchmarks, benchmarkCandidates, mapLayout, narrativeMemory, knowledgeFacets, concepts, systems] = await Promise.all([
     api(`/api/books/${requestedBookId}/overview${query}`),
     api(`/api/books/${requestedBookId}/benchmarks`),
     api(`/api/books/${requestedBookId}/benchmark-candidates`),
@@ -276,6 +575,7 @@ async function loadOverview(throughSegment = null, silent = false) {
     api(`/api/books/${requestedBookId}/narrative-memory${query}`),
     api(`/api/books/${requestedBookId}/knowledge-facets`),
     api(`/api/books/${requestedBookId}/concepts?status=&limit=1000`),
+    api(`/api/books/${requestedBookId}/systems`),
   ]);
   if (state.bookId !== requestedBookId) return;
   state.overview = overview;
@@ -285,6 +585,8 @@ async function loadOverview(throughSegment = null, silent = false) {
   state.narrativeMemory = narrativeMemory;
   state.knowledgeFacets = knowledgeFacets;
   state.concepts = concepts;
+  state.systems = systems;
+  $("#systems-nav").hidden = !systems.some((system) => system.status === "active" && system.nodes?.length);
   configureProgress();
   renderHeader();
   renderMetrics();
@@ -300,6 +602,41 @@ function configureProgress() {
   const segment = overview.segments[overview.through_segment];
   $("#progress-chapter").textContent = segment?.chapter_title || "无章节";
   $("#progress-count").textContent = `${overview.through_segment + 1}/${overview.segments.length}`;
+  $("#progress-edit")?.setAttribute("aria-label", `编辑防剧透进度，当前第 ${overview.through_segment + 1} 部分`);
+}
+
+function beginProgressEdit() {
+  const holder = $(".progress-copy");
+  if (!holder || holder.querySelector(".progress-inline-input") || !state.overview) return;
+  const count = $("#progress-count");
+  const input = document.createElement("input");
+  input.className = "progress-inline-input";
+  input.type = "number";
+  input.min = "1";
+  input.max = String(state.overview.segments.length);
+  input.value = String(Number($("#progress-slider").value) + 1);
+  input.setAttribute("aria-label", "输入已经读到的部分序号");
+  count.hidden = true;
+  count.after(input);
+  let finished = false;
+  const finish = async (commit) => {
+    if (finished) return;
+    finished = true;
+    const next = Math.max(1, Math.min(state.overview.segments.length, Number.parseInt(input.value, 10) || 1));
+    input.remove();
+    count.hidden = false;
+    if (!commit) return;
+    $("#progress-slider").value = String(next - 1);
+    count.textContent = `${next}/${state.overview.segments.length}`;
+    await loadOverview(next - 1);
+  };
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); finish(true); }
+    if (event.key === "Escape") { event.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+  input.focus();
+  input.select();
 }
 
 function renderHeader() {
@@ -340,6 +677,7 @@ function renderJobFromOverview() {
 
 function renderJob(job) {
   const panel = $("#job-panel");
+  panel.dataset.status = job.status;
   const total = Number(job.total_segments || 0);
   const completed = Number(job.completed_segments || 0);
   const reviewOnly = total === 0;
@@ -405,7 +743,7 @@ function openBudgetEditor(job) {
   $("#analysis-review-mode").hidden = true;
   $("#analysis-start").textContent = "保存新上限";
   $("#analysis-start").disabled = false;
-  $("#analysis-dialog").showModal();
+  openDialog("#analysis-dialog", "#analysis-budget");
 }
 
 function scheduleJobPoll() {
@@ -447,10 +785,12 @@ async function controlAnalysisJob(action) {
 }
 
 function renderView() {
+  document.body.dataset.view = state.view;
   disposeRelationshipGraph();
   disposeMapGraph();
   if (state.view !== "map") stopMapPlayback();
   if (state.view === "map") closeInspector();
+  document.body.dataset.view = state.view;
   renderHeader();
   $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === state.view));
   const renderers = {
@@ -459,8 +799,10 @@ function renderView() {
     map: renderMap,
     world: renderWorld,
     database: renderDatabase,
+    systems: renderSystems,
     quality: renderQuality,
     collaboration: renderCollaboration,
+    library: renderLibraryManager,
   };
   renderers[state.view]();
 }
@@ -471,6 +813,57 @@ function panelHead(title, description, legend = "") {
 
 function emptyState(title, message) {
   return `<div class="empty-state"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(message)}</p></div>`;
+}
+
+function relationDisplay(claim) {
+  if (claim.directionality !== "bidirectional") {
+    return `${claim.source_name} —${claim.predicate}→ ${claim.target_name}`;
+  }
+  const reverse = claim.reverse_predicate || claim.predicate;
+  const predicate = reverse === claim.predicate ? claim.predicate : `${claim.predicate} ⇄ ${reverse}`;
+  return `${claim.source_name} —${predicate}— ${claim.target_name}`;
+}
+
+function relationPredicateLabel(claim) {
+  if (claim.directionality !== "bidirectional") return claim.predicate;
+  const reverse = claim.reverse_predicate || claim.predicate;
+  return reverse === claim.predicate ? claim.predicate : `${claim.predicate} ⇄ ${reverse}`;
+}
+
+const knowledgePredicateLabels = {
+  summary: "核心说明",
+  description: "详细说明",
+  identity: "身份",
+  affiliation: "归属",
+  location: "所在地点",
+  status: "当前状态",
+};
+
+const knowledgeSourceLabels = {
+  original_text: "原文事实",
+  human_note: "人工说明",
+  external_fact: "外部资料",
+  migrated_entry: "旧数据迁移",
+  migrated_world_note: "旧世界信息迁移",
+};
+
+const knowledgeStatusLabels = {
+  accepted: "已确认",
+  parallel: "证据并列",
+  needs_resolution: "等待解决",
+  deprecated: "已弃用",
+};
+
+function knowledgePredicateLabel(value) {
+  return knowledgePredicateLabels[value] || String(value || "未命名属性").replaceAll("_", " ");
+}
+
+function knowledgeSourceLabel(value) {
+  return knowledgeSourceLabels[value] || "系统整理";
+}
+
+function knowledgeStatusLabel(value) {
+  return knowledgeStatusLabels[value] || "状态未知";
 }
 
 // 正式关系图始终返回全部已确认节点和关系。缩放只调整标签密度，不能删除事实。
@@ -499,7 +892,7 @@ function renderRelationships() {
   const automaticCount = Number(identitySummary.merge || 0) + Number(identitySummary.separate || 0);
   const mergeReview = `<details class="merge-review${mergeCandidates.length ? " warning" : ""}"><summary>身份系统已自动裁决 ${automaticCount} 组 · ${mergeCandidates.length} 组证据不足，可选复核</summary>${mergeCandidates.length ? `<div class="merge-list">${mergeCandidates.map((candidate) => `<div class="merge-candidate"><span><strong>${escapeHtml(candidate.left_name)}</strong> 与 <strong>${escapeHtml(candidate.right_name)}</strong><br>${escapeHtml(candidate.reason)} · 系统未自动合并</span><div class="merge-candidate-actions"><button class="button button-quiet merge-choice" data-keep="${candidate.left_entity_id}" data-remove="${candidate.right_entity_id}" type="button">确认为 ${escapeHtml(candidate.left_name)}</button><button class="button button-quiet merge-choice" data-keep="${candidate.right_entity_id}" data-remove="${candidate.left_entity_id}" type="button">确认为 ${escapeHtml(candidate.right_name)}</button><button class="button button-danger merge-reject" data-id="${candidate.id}" type="button">确认是两个人</button></div></div>`).join("")}</div>` : '<p class="merge-complete">没有遗留给用户的身份判断。</p>'}</details>`;
   const isolatedSection = confirmedIsolated.length || unresolvedConnectivity.length ? `<section class="connectivity-review-section">
-    ${confirmedIsolated.length ? `<details><summary>已确认孤立 ${confirmedIsolated.length} 个</summary><div class="connectivity-card-grid">${confirmedIsolated.map((item) => `<button class="connectivity-card target-button" data-type="entity" data-id="${item.entity_id}" type="button"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.reason)}</span><small>已扫描 ${item.scanned_segment_count} 个章节 · ${item.mention_count} 次提及</small></button>`).join("")}</div></details>` : ""}
+    ${confirmedIsolated.length ? `<details><summary>已确认孤立 ${confirmedIsolated.length} 个</summary><div class="connectivity-card-grid">${confirmedIsolated.map((item) => `<button class="connectivity-card target-button" data-type="entity" data-id="${item.entity_id}" type="button"><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.reason)}</span><small>已扫描 ${item.scanned_segment_count} 个原文片段 · ${item.mention_count} 次提及</small></button>`).join("")}</div></details>` : ""}
     ${unresolvedConnectivity.length ? `<details class="warning" open><summary>等待关系复审 ${unresolvedConnectivity.length} 个</summary><p>这些节点不会混入正式关系图。系统会先自动复审，仍有歧义时可在质量检查中手动解决。</p></details>` : ""}
   </section>` : "";
   if (!allEntities.length) {
@@ -509,7 +902,7 @@ function renderRelationships() {
     return;
   }
   const fallbackEntities = entities.map((node) => `<li><button class="text-link target-button" data-type="entity" data-id="${node.id}">${escapeHtml(node.name)}</button> · ${escapeHtml(categoryLabels[node.kind] || node.kind)}</li>`).join("");
-  const fallbackClaims = claims.map((claim) => `<li><button class="text-link target-button" data-type="claim" data-id="${claim.id}">${escapeHtml(claim.source_name)} —${escapeHtml(claim.predicate)}→ ${escapeHtml(claim.target_name)}</button></li>`).join("");
+  const fallbackClaims = claims.map((claim) => `<li><button class="text-link target-button" data-type="claim" data-id="${claim.id}">${escapeHtml(relationDisplay(claim))}</button></li>`).join("");
   const interactionHint = state.relationshipMode === "3d" ? "拖动空白处旋转，拖动节点固定位置，滚轮缩放；悬停会突出当前关系。" : "拖动空白处平移，拖动节点固定位置，滚轮缩放；悬停会突出当前关系。";
   $("#view-panel").innerHTML = `${panelHead("人物关系网", interactionHint, legend)}${mergeReview}
     <div class="graph-toolbar" aria-label="关系图控制">
@@ -536,7 +929,7 @@ function createRelationshipGraph(entities, claims) {
   }
   const pairCounts = new Map();
   const pairIndexes = new Map();
-  const links = claims.map((claim) => {
+  const baseLinks = claims.map((claim) => {
     const pairKey = [claim.source_entity_id, claim.target_entity_id].sort((a, b) => a - b).join(":");
     pairCounts.set(pairKey, (pairCounts.get(pairKey) || 0) + 1);
     const index = pairIndexes.get(pairKey) || 0;
@@ -547,14 +940,24 @@ function createRelationshipGraph(entities, claims) {
       target: claim.target_entity_id,
       pairKey,
       pairIndex: index,
+      visualDirection: "forward",
     };
   });
-  links.forEach((link) => {
+  baseLinks.forEach((link) => {
     const count = pairCounts.get(link.pairKey) || 1;
     link.curvature = count === 1 ? 0 : (link.pairIndex - (count - 1) / 2) * 0.18;
   });
+  const links = baseLinks.flatMap((link) => link.directionality === "bidirectional"
+    ? [link, {
+      ...link,
+      source: link.target_entity_id,
+      target: link.source_entity_id,
+      visualDirection: "reverse",
+      curvature: link.curvature,
+    }]
+    : [link]);
   const degree = new Map(entities.map((node) => [node.id, 0]));
-  links.forEach((link) => {
+  baseLinks.forEach((link) => {
     degree.set(link.source_entity_id, (degree.get(link.source_entity_id) || 0) + 1);
     degree.set(link.target_entity_id, (degree.get(link.target_entity_id) || 0) + 1);
   });
@@ -612,7 +1015,7 @@ function createRelationshipGraph(entities, claims) {
     const hoveredLink = state.relationshipHover?.link;
     if (!focus) return;
     if (hoveredLink) {
-      focus.innerHTML = `<strong>${escapeHtml(hoveredLink.source_name)} —${escapeHtml(hoveredLink.predicate)}→ ${escapeHtml(hoveredLink.target_name)}</strong><span>${escapeHtml(hoveredLink.summary)} · 点击关系线查看原文证据</span>`;
+      focus.innerHTML = `<strong>${escapeHtml(relationDisplay(hoveredLink))}</strong><span>${escapeHtml(hoveredLink.summary)} · 点击关系线查看原文证据</span>`;
       return;
     }
     if (hoveredNode) {
@@ -639,18 +1042,18 @@ function createRelationshipGraph(entities, claims) {
       return semanticPalette[node.kind] || semanticPalette.other;
     })
     .linkColor((link) => {
-      if (state.relationshipHover?.link === link) return semanticPalette.current;
+      if (state.relationshipHover?.link && Number(state.relationshipHover.link.id) === Number(link.id)) return semanticPalette.current;
       const hoveredNode = state.relationshipHover?.node;
       if (hoveredNode) return linkedToHovered(link, hoveredNode.id) ? "#222222" : "#dededa";
       if (state.relationshipHover?.link) return "#dededa";
       return "#92928e";
     })
     .linkOpacity(0.48)
-    .linkWidth((link) => state.relationshipHover?.link === link || (state.relationshipHover?.node && linkedToHovered(link, state.relationshipHover.node.id)) ? 3.2 : 1.2)
+    .linkWidth((link) => (state.relationshipHover?.link && Number(state.relationshipHover.link.id) === Number(link.id)) || (state.relationshipHover?.node && linkedToHovered(link, state.relationshipHover.node.id)) ? 3.2 : link.visualDirection === "reverse" ? 0.7 : 1.2)
     .linkCurvature((link) => link.curvature)
     .linkDirectionalArrowLength(3.1)
     .linkDirectionalArrowRelPos(0.76)
-    .linkDirectionalArrowColor((link) => state.relationshipHover?.link === link ? semanticPalette.current : "#666663")
+    .linkDirectionalArrowColor((link) => state.relationshipHover?.link && Number(state.relationshipHover.link.id) === Number(link.id) ? semanticPalette.current : "#666663")
     .linkHoverPrecision(3)
     .onNodeHover((node) => {
       state.relationshipHover = { node, link: null };
@@ -825,6 +1228,9 @@ function createRelationshipGraph2D(entities, claims) {
         source: `n${claim.source_entity_id}`,
         target: `n${claim.target_entity_id}`,
         predicate: claim.predicate,
+        reversePredicate: claim.reverse_predicate || claim.predicate,
+        directionality: claim.directionality || "directed",
+        displayPredicate: relationPredicateLabel(claim),
         summary: claim.summary,
         sourceName: claim.source_name,
         targetName: claim.target_name,
@@ -835,8 +1241,8 @@ function createRelationshipGraph2D(entities, claims) {
   const cy = window.cytoscape({
     container: host,
     elements,
-    minZoom: 0.16,
-    maxZoom: 3.2,
+    minZoom: 0.03,
+    maxZoom: 12,
     boxSelectionEnabled: false,
     autoungrabify: false,
     style: [
@@ -872,6 +1278,8 @@ function createRelationshipGraph2D(entities, claims) {
           "line-color": "#91a79f",
           "target-arrow-color": "#718d83",
           "target-arrow-shape": "triangle",
+          "source-arrow-color": "#718d83",
+          "source-arrow-shape": "none",
           "arrow-scale": 0.68,
           "curve-style": "bezier",
           opacity: 0.58,
@@ -885,9 +1293,10 @@ function createRelationshipGraph2D(entities, claims) {
           "overlay-opacity": 0,
         },
       },
+      { selector: "edge[directionality = 'bidirectional']", style: { "source-arrow-shape": "triangle" } },
       { selector: ".muted", style: { opacity: 0.09, "text-opacity": 0 } },
       { selector: "node.focused", style: { "border-color": semanticPalette.current, "border-width": 6, "z-index": 20 } },
-      { selector: "edge.focused", style: { opacity: 1, width: 3.2, "line-color": semanticPalette.person, "target-arrow-color": semanticPalette.current, label: "data(predicate)", "z-index": 18 } },
+      { selector: "edge.focused", style: { opacity: 1, width: 3.2, "line-color": semanticPalette.person, "target-arrow-color": semanticPalette.current, "source-arrow-color": semanticPalette.current, label: "data(displayPredicate)", "z-index": 18 } },
     ],
   });
   state.relationshipCy = cy;
@@ -937,7 +1346,7 @@ function createRelationshipGraph2D(entities, claims) {
     cy.elements().not(edge).not(edge.connectedNodes()).addClass("muted");
     edge.addClass("focused");
     edge.connectedNodes().addClass("focused");
-    if (focus) focus.innerHTML = `<strong>${escapeHtml(edge.data("sourceName"))} —${escapeHtml(edge.data("predicate"))}→ ${escapeHtml(edge.data("targetName"))}</strong><span>${escapeHtml(edge.data("summary"))} · 点击关系线查看原文证据</span>`;
+    if (focus) focus.innerHTML = `<strong>${escapeHtml(edge.data("sourceName"))} —${escapeHtml(edge.data("displayPredicate"))}— ${escapeHtml(edge.data("targetName"))}</strong><span>${escapeHtml(edge.data("summary"))} · 点击关系线查看原文证据</span>`;
   });
   cy.on("mouseout", "edge", clearFocus);
   cy.on("tap", "node", (event) => openInspector("entity", Number(event.target.data("entityId"))));
@@ -1404,6 +1813,9 @@ function renderMap() {
       .slice(0, Math.max(0, 40 - mappedLocationIds.size))
       .forEach((location) => mappedLocationIds.add(Number(location.id)));
   }
+  // 地图必须保留所有已识别地点。未进入主角行程的地点可以降低标签优先级，
+  // 但不能从二维、三维或语义区域中消失。
+  allLocations.forEach((location) => mappedLocationIds.add(Number(location.id)));
   const locations = allLocations.filter((location) => mappedLocationIds.has(Number(location.id)));
   const geographyRelations = allGeographyRelations.filter(
     (relation) => mappedLocationIds.has(Number(relation.source_entity_id)) && mappedLocationIds.has(Number(relation.target_entity_id)),
@@ -1448,7 +1860,11 @@ function renderMap() {
   const labelPlacements = mapLabelPlacements(locations, points, journey, currentLocationId);
   state.mapPoints = points;
   const pointValues = [...points.values()];
-  state.mapBounds = {
+  const snapshotBounds = state.mapLayout?.world_bounds;
+  state.mapBounds = snapshotBounds ? {
+    minX: Number(snapshotBounds.min_x), maxX: Number(snapshotBounds.max_x),
+    minY: Number(snapshotBounds.min_y), maxY: Number(snapshotBounds.max_y),
+  } : {
     minX: Math.min(...pointValues.map((point) => point.x)) - 110,
     maxX: Math.max(...pointValues.map((point) => point.x)) + 110,
     minY: Math.min(...pointValues.map((point) => point.y)) - 90,
@@ -1459,9 +1875,11 @@ function renderMap() {
   const visibleLocationIds = new Set(locations.map((location) => Number(location.id)));
   const semanticRegions = state.mapPresentation === "atlas" ? (state.mapLayout?.regions || []).map((region, index) => {
     const regionNodes = (region.node_ids || []).filter((nodeId) => visibleLocationIds.has(Number(nodeId)));
-    if (regionNodes.length < 3 || !(region.hull || []).length) return "";
+    if (!regionNodes.length || (region.hull || []).length < 3) return "";
+    const activeRegion = currentLocationId !== null && currentLocationId !== undefined && regionNodes.some((nodeId) => Number(nodeId) === Number(currentLocationId));
+    if (region.display_policy === "focus_only" && !activeRegion) return "";
     const path = region.hull.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${Number(point.x)} ${Number(point.y)}`).join(" ");
-    return `<g class="semantic-region region-${index % 6}"><path d="${path} Z"></path><title>${escapeHtml(region.label)}；语义区域不代表原文明示边界</title></g>`;
+    return `<g class="semantic-region region-${Number(region.palette_index ?? index) % 6}" data-region="${escapeHtml(region.id)}" tabindex="0" role="button"><path d="${path} Z"></path><title>${escapeHtml(region.label)}；语义区域不代表原文明示边界</title></g>`;
   }).join("") : "";
   const geography = geographyRelations.slice(0, 36).map((relation) => {
     const start = points.get(relation.source_entity_id);
@@ -1504,7 +1922,7 @@ function renderMap() {
     const label = labelPlacements.get(location.id);
     const rectX = label.anchor === "middle" ? label.x - label.width / 2 : label.anchor === "start" ? label.x - 5 : label.x - label.width + 5;
     const labelClass = label.visible ? "map-node-label" : "map-node-label map-node-label-collided";
-    return `<g class="map-node graph-node" data-location="${location.id}" tabindex="0" role="button" aria-label="跳到${escapeHtml(location.name)}发生的剧情"><circle cx="${point.x}" cy="${point.y}" r="20"></circle><g class="${labelClass}"><line class="map-label-stem" x1="${point.x}" y1="${point.y}" x2="${label.x}" y2="${label.y - 4}"></line><rect class="map-label-bg" x="${rectX}" y="${label.y - 17}" width="${label.width}" height="24" rx="7"></rect><text x="${label.x}" y="${label.y}" text-anchor="${label.anchor}">${escapeHtml(mapDisplayName(location.name))}</text></g><title>${escapeHtml(location.name)} · ${escapeHtml(location.summary)}</title></g>`;
+    return `<g class="map-node graph-node${journeyLocationIds.has(Number(location.id)) ? " main-line" : ""}" data-location="${location.id}" tabindex="0" role="button" aria-label="跳到${escapeHtml(location.name)}发生的剧情"><circle cx="${point.x}" cy="${point.y}" r="20"></circle><g class="${labelClass}"><line class="map-label-stem" x1="${point.x}" y1="${point.y}" x2="${label.x}" y2="${label.y - 4}"></line><rect class="map-label-bg" x="${rectX}" y="${label.y - 17}" width="${label.width}" height="24" rx="7"></rect><text x="${label.x}" y="${label.y}" text-anchor="${label.anchor}">${escapeHtml(mapDisplayName(location.name))}</text></g><title>${escapeHtml(location.name)} · ${escapeHtml(location.summary)}</title></g>`;
   }).join("");
   const firstEvent = journey[state.mapStep];
   const firstPoint = firstEvent?.location_entity_id !== null ? points.get(firstEvent.location_entity_id) : null;
@@ -1524,12 +1942,13 @@ function renderMap() {
         ? `原文没有东南西北坐标；地图根据 ${routeTopology.length} 条移动连接形成稳定拓扑，不把坐标冒充真实方位。`
         : "原文尚未提供可核验方位；地点使用稳定拓扑投影，坐标不代表真实方向。";
   const mapModes = `<div class="map-view-toolbar"><div class="map-toolbar-groups"><div class="segmented-control" aria-label="地图表现"><button class="map-presentation${state.mapPresentation === "atlas" ? " active" : ""}" data-presentation="atlas" type="button">语义世界图</button><button class="map-presentation${state.mapPresentation === "evidence" ? " active" : ""}" data-presentation="evidence" type="button">证据逻辑图</button></div><div class="segmented-control" aria-label="地图维度"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D</button></div></div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；纵深只表示有证据的包含层级。" : state.mapPresentation === "atlas" ? "彩色区域只整理故事拓扑，不代表原文明示边界。" : "只显示能够回到原文的方向、包含和移动关系。"}</span></div>`;
-  const viewportControls = `<div class="map-viewport-controls" aria-label="地图缩放"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-zoom-reset" type="button">复位</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div>`;
+  const viewportControls = `<div class="map-viewport-controls" aria-label="地图视角"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-fit-world" type="button">全世界</button><button id="map-fit-region" type="button">当前区域</button><button id="map-fit-step" type="button">当前步骤</button><button id="map-zoom-reset" type="button">恢复视角</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div>`;
   const mapCanvas = state.mapMode === "3d"
     ? `<div class="map-3d-shell"><div id="map-3d" class="map-3d" role="img" aria-label="可旋转、缩放并逐步播放的三维故事地图"></div><div id="map-3d-labels" class="map-3d-labels" aria-hidden="true"></div><div class="map-3d-axis" aria-hidden="true">${directionalCount ? "<span>北 ↑</span>" : "<span>平面方位未知</span>"}<span>纵深＝有证据的包含层级</span>${directionalCount ? "<span>东 →</span>" : "<span>拓扑坐标</span>"}</div></div>`
     : `<svg class="map-svg" viewBox="0 0 900 470" role="img" aria-label="可拖动、缩放并逐步播放的二维故事地图"><defs><marker id="route-arrow" markerUnits="userSpaceOnUse" markerWidth="3.2" markerHeight="3.2" refX="2.8" refY="1.6" orient="auto"><path d="M0,0 L3.2,1.6 L0,3.2 z" fill="context-stroke"></path></marker></defs>${paper}${semanticRegions}${geography}${topology}${routes}${nodes}<g id="journey-avatar" class="journey-avatar" ${initialMarker}><circle r="15"></circle><text y="4">${escapeHtml(initials)}</text></g></svg>`;
-  $("#view-panel").innerHTML = `${panelHead("逻辑地图与故事编年", "二维和三维共用同一个故事步骤、地点证据和播放状态。", legend)}<p class="map-position-note">${escapeHtml(positionNote)}</p>${protagonistPicker}${controls}<div class="journey-layout"><div class="map-stage">${mapModes}${viewportControls}${mapCanvas}</div><section id="map-event-card" class="map-event-card" aria-live="polite"></section></div><section id="map-location-panel" class="map-location-panel" aria-live="polite"></section>`;
+  $("#view-panel").innerHTML = `${panelHead("逻辑地图与故事编年", "二维和三维共用同一个故事步骤、地点证据和播放状态。", legend)}<p class="map-position-note">${escapeHtml(positionNote)}</p>${protagonistPicker}${controls}<div class="journey-layout"><div class="map-stage">${mapModes}${viewportControls}${mapCanvas}</div><aside class="map-context-rail" aria-label="地图编年与地点信息"><div class="map-rail-tabs" role="tablist"><button class="map-rail-tab${state.mapRailTab === "chronology" ? " active" : ""}" data-tab="chronology" role="tab" type="button">故事编年</button><button class="map-rail-tab${state.mapRailTab === "location" ? " active" : ""}" data-tab="location" role="tab" type="button">地点档案</button></div><div id="map-chronology-panel" class="map-rail-panel" ${state.mapRailTab === "chronology" ? "" : "hidden"}><section id="map-event-card" class="map-event-card" aria-live="polite"></section><nav id="map-chronology-list" class="map-chronology-list" aria-label="完整故事编年"></nav></div><section id="map-location-panel" class="map-location-panel map-rail-panel" aria-live="polite" ${state.mapRailTab === "location" ? "" : "hidden"}></section></aside></div>`;
   bindProtagonistPicker();
+  bindMapRailTabs();
   if (state.mapMode === "3d") {
     createMapGraph3D(locations, geographyRelations, routeTopology, journey, routeByEventId, points);
   } else {
@@ -1550,6 +1969,16 @@ function renderMap() {
     window.localStorage.setItem("novel-atlas-map-presentation", nextPresentation);
     renderMap();
   }));
+  $$(".semantic-region").forEach((regionElement) => {
+    const activate = () => renderMapRegionDetails(regionElement.dataset.region);
+    regionElement.addEventListener("click", activate);
+    regionElement.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      }
+    });
+  });
   if (!journey.length) {
     $("#map-event-card").innerHTML = emptyState("还没有连续行程", "事件需要同时包含地点和主线人物，才能在地图上逐步移动。");
     $$(".map-node").forEach((node) => {
@@ -1568,6 +1997,7 @@ function renderMap() {
       const step = journey.findIndex((event) => Number(event.location_entity_id) === locationId);
       if (step >= 0) setMapStep(step);
       renderMapLocationDetails(locationId);
+      activateMapRailTab("location");
     };
     node.addEventListener("click", activate);
     node.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") activate(); });
@@ -1646,6 +2076,18 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
     };
   });
   const nodeByLocation = new Map(nodes.map((node) => [node.locationId, node]));
+  map3DVisibleRegions().forEach((region, index) => {
+    const centroid = region.centroid || region.hull?.[0];
+    if (!centroid) return;
+    const x = (Number(centroid.x) - centerX) * 0.72;
+    const y = -(Number(centroid.y) - centerY) * 0.72;
+    const z = Number(region.containment_depth || 0) * 86 + 12;
+    nodes.push({
+      id: `region:${region.id}`, name: region.label, kind: "region", regionId: String(region.id),
+      memberIds: (region.node_ids || []).map(Number), x, y, z, fx: x, fy: y, fz: z,
+      importance: 0.25, active: false, focused: true, visible: true,
+    });
+  });
   const links = [];
   geographyRelations.forEach((relation) => {
     if (!nodeByLocation.has(Number(relation.source_entity_id)) || !nodeByLocation.has(Number(relation.target_entity_id))) return;
@@ -1722,12 +2164,12 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
     .numDimensions(3)
     .backgroundColor("#f7f7f5")
     .showNavInfo(false)
-    .nodeLabel((node) => node.kind === "actor" ? `<strong>${escapeHtml(node.name)}</strong><br>当前故事步骤` : `<strong>${escapeHtml(node.name)}</strong><br>${escapeHtml(node.summary || "点击查看地点信息")}`)
+    .nodeLabel((node) => node.kind === "actor" ? `<strong>${escapeHtml(node.name)}</strong><br>当前故事步骤` : node.kind === "region" ? `<strong>${escapeHtml(node.name)}</strong><br>语义区域，不代表真实地理边界` : `<strong>${escapeHtml(node.name)}</strong><br>${escapeHtml(node.summary || "点击查看地点信息")}`)
     .nodeVisibility((node) => node.visible !== false)
-    .nodeVal((node) => node.kind === "actor" ? 12 : node.active ? 8 : 4.5 + Math.min(3, Number(node.importance || 0) * 2))
+    .nodeVal((node) => node.kind === "actor" ? 12 : node.kind === "region" ? 2.2 : node.active ? 8 : 4.5 + Math.min(3, Number(node.importance || 0) * 2))
     .nodeResolution(20)
     .nodeOpacity(1)
-    .nodeColor((node) => node.kind === "actor" ? semanticPalette.current : node.active ? semanticPalette.current : node.focused === false ? "#8b97d4" : semanticPalette.place)
+    .nodeColor((node) => node.kind === "actor" ? semanticPalette.current : node.kind === "region" ? semanticPalette.faction : node.active ? semanticPalette.current : node.focused === false ? "#c7cbe0" : semanticPalette.place)
     .linkLabel((link) => escapeHtml(link.label || "连接"))
     .linkVisibility((link) => link.visible !== false)
     .linkColor((link) => link.current ? semanticPalette.current : link.kind === "journey" ? (semanticPalette[link.transport] || semanticPalette.road) : link.kind === "topology" ? "#718096" : semanticPalette.place)
@@ -1746,9 +2188,17 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
     })
     .onNodeClick((node) => {
       if (node.kind === "actor") return;
+      if (node.kind === "region") {
+        renderMapRegionDetails(node.regionId);
+        activateMapRailTab("location");
+        const members = nodes.filter((item) => item.kind === "place" && node.memberIds.includes(item.locationId));
+        graph.zoomToFit(480, 90, (item) => item.kind === "place" && node.memberIds.includes(item.locationId));
+        return;
+      }
       const step = journey.findIndex((event) => Number(event.location_entity_id) === node.locationId);
       if (step >= 0) setMapStep(step);
-      else renderMapLocationDetails(node.locationId);
+      renderMapLocationDetails(node.locationId);
+      activateMapRailTab("location");
     });
   graph.enableNodeDrag?.(false);
   const controls = graph.controls();
@@ -1760,8 +2210,9 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
   controls.rotateSpeed = 0.46;
   controls.zoomSpeed = 0.62;
   controls.panSpeed = 0.56;
-  controls.minDistance = 70;
-  controls.maxDistance = 3600;
+  controls.minDistance = 8;
+  controls.maxDistance = 100000;
+  installMap3DRegionMeshes(graph, centerX, centerY);
   const resize = () => {
     graph.width(Math.max(320, host.clientWidth)).height(Math.max(500, Math.min(690, Math.round(window.innerHeight * 0.64))));
   };
@@ -1796,6 +2247,17 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
   $("#map-zoom-in")?.addEventListener("click", () => zoomCamera(0.82));
   $("#map-zoom-out")?.addEventListener("click", () => zoomCamera(1.18));
   $("#map-zoom-reset")?.addEventListener("click", () => graph.zoomToFit(520, 78, (node) => node.kind !== "actor"));
+  $("#map-fit-world")?.addEventListener("click", () => graph.zoomToFit(520, 88, (node) => node.kind === "place"));
+  $("#map-fit-step")?.addEventListener("click", () => {
+    const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
+    const node = nodes.find((item) => item.kind === "place" && item.locationId === currentLocationId);
+    if (node) cameraFocus(node, true);
+  });
+  $("#map-fit-region")?.addEventListener("click", () => {
+    const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
+    const region = (state.mapLayout?.regions || []).find((item) => (item.node_ids || []).some((id) => Number(id) === currentLocationId));
+    if (region) graph.zoomToFit(520, 90, (node) => node.kind === "place" && (region.node_ids || []).some((id) => Number(id) === node.locationId));
+  });
   let lastLabelDraw = 0;
   const drawLabels = (time) => {
     if (state.mapGraph !== graph) return;
@@ -1819,7 +2281,7 @@ function renderMap3DLabels(graph, nodes) {
   const host = $("#map-3d");
   if (!layer || !host) return;
   const candidates = nodes
-    .filter((node) => node.kind !== "actor" && node.visible !== false && node.focused !== false && Number.isFinite(node.x) && Number.isFinite(node.y))
+    .filter((node) => node.kind !== "actor" && node.visible !== false && (node.kind === "region" || node.focused !== false) && Number.isFinite(node.x) && Number.isFinite(node.y))
     .sort((left, right) => Number(right.active) - Number(left.active) || Number(right.importance || 0) - Number(left.importance || 0))
     .slice(0, 28);
   const occupied = [];
@@ -1827,7 +2289,7 @@ function renderMap3DLabels(graph, nodes) {
   for (const node of candidates) {
     const point = graph.graph2ScreenCoords(node.x, node.y, node.z || 0);
     if (!point || point.x < 12 || point.y < 12 || point.x > host.clientWidth - 12 || point.y > host.clientHeight - 12) continue;
-    const label = mapDisplayName(node.name);
+    const label = node.kind === "region" ? node.name : mapDisplayName(node.name);
     const width = Math.max(52, [...label].length * 13 + 18);
     const placements = [[0, 30], [0, -30], [width / 2 + 18, 0], [-width / 2 - 18, 0]];
     let chosen = null;
@@ -1876,6 +2338,83 @@ function renderMapLocationDetails(locationId) {
   }));
 }
 
+function activateMapRailTab(tab) {
+  state.mapRailTab = tab === "location" ? "location" : "chronology";
+  $$(".map-rail-tab").forEach((button) => {
+    const active = button.dataset.tab === state.mapRailTab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  const chronology = $("#map-chronology-panel");
+  const location = $("#map-location-panel");
+  if (chronology) chronology.hidden = state.mapRailTab !== "chronology";
+  if (location) location.hidden = state.mapRailTab !== "location";
+}
+
+function bindMapRailTabs() {
+  $$(".map-rail-tab").forEach((button) => button.addEventListener("click", () => {
+    activateMapRailTab(button.dataset.tab);
+  }));
+  const list = $("#map-chronology-list");
+  list?.addEventListener("scroll", () => {
+    if (list.dataset.scrollLock === "true") return;
+    const journey = storyMapSteps();
+    const center = Math.max(0, Math.min(journey.length - 1, Math.floor((list.scrollTop + list.clientHeight / 2) / 76)));
+    if (Math.abs(center - state.mapChronologyCenter) < 24) return;
+    const scrollTop = list.scrollTop;
+    state.mapChronologyCenter = center;
+    renderMapChronologyList(journey, state.mapStep, false);
+    list.scrollTop = scrollTop;
+  }, { passive: true });
+}
+
+function renderMapChronologyList(journey, activeStep, scrollToActive = true) {
+  const list = $("#map-chronology-list");
+  if (!list) return;
+  const itemHeight = 76;
+  const radius = 34;
+  const center = scrollToActive ? activeStep : state.mapChronologyCenter;
+  state.mapChronologyCenter = center;
+  const start = Math.max(0, center - radius);
+  const end = Math.min(journey.length, center + radius + 1);
+  const items = journey.slice(start, end).map((event, offset) => {
+    const index = start + offset;
+    return `<button class="map-chronology-item${index === activeStep ? " active" : ""}" data-step="${index}" type="button"${index === activeStep ? ' aria-current="step"' : ""}><span>${index + 1}</span><strong>${escapeHtml(event.title)}</strong><small>${escapeHtml(event.temporal_value || chapterForSegment(event.first_segment))}</small></button>`;
+  }).join("");
+  list.dataset.scrollLock = "true";
+  list.innerHTML = `<div class="map-chronology-spacer" style="height:${start * itemHeight}px"></div>${items}<div class="map-chronology-spacer" style="height:${Math.max(0, journey.length - end) * itemHeight}px"></div>`;
+  $$(".map-chronology-item").forEach((button) => button.addEventListener("click", () => {
+    activateMapRailTab("chronology");
+    setMapStep(Number(button.dataset.step));
+  }));
+  requestAnimationFrame(() => {
+    if (scrollToActive) list.scrollTop = Math.max(0, activeStep * itemHeight - list.clientHeight * 0.42);
+    list.dataset.scrollLock = "false";
+  });
+}
+
+function renderMapRegionDetails(regionId) {
+  const region = (state.mapLayout?.regions || []).find((item) => String(item.id) === String(regionId));
+  const panel = $("#map-location-panel");
+  if (!region || !panel) return;
+  const locationIds = new Set((region.node_ids || []).map(Number));
+  const locations = state.overview.entities.filter((item) => item.kind === "place" && locationIds.has(Number(item.id)));
+  const events = storyMapSteps().filter((item) => locationIds.has(Number(item.location_entity_id)));
+  const locationButtons = locations.map((item) => `<button class="map-region-location" data-location="${item.id}" type="button"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.summary || "原文已识别此地点")}</small></button>`).join("");
+  const eventButtons = events.slice(0, 40).map((item) => `<button class="map-location-event" data-event="${item.id}" type="button"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.temporal_value || chapterForSegment(item.first_segment))}</span></button>`).join("");
+  const level = Number(region.containment_depth || 0);
+  panel.innerHTML = `<header><span class="eyebrow">${region.evidence_level === "explicit" ? "原文包含区域" : "语义区域"}</span><h3>${escapeHtml(region.label)}</h3><p>包含 ${locations.length} 个当前可见地点 · 层级 ${level} · 区域轮廓只用于组织故事空间</p></header><section class="map-region-section"><h4>区域地点</h4>${locationButtons || '<p class="muted-copy">当前剧透边界内没有可显示地点</p>'}</section><section class="map-region-section"><h4>相关编年</h4>${eventButtons || '<p class="muted-copy">当前没有绑定到该区域的编年事件</p>'}</section>`;
+  $$(".map-region-location").forEach((button) => button.addEventListener("click", () => renderMapLocationDetails(Number(button.dataset.location))));
+  $$(".map-location-event").forEach((button) => button.addEventListener("click", () => {
+    const step = storyMapSteps().findIndex((item) => Number(item.id) === Number(button.dataset.event));
+    if (step >= 0) {
+      activateMapRailTab("chronology");
+      setMapStep(step);
+    }
+  }));
+  activateMapRailTab("location");
+}
+
 // 地图使用视窗坐标完成滚轮缩放和空白处拖动，节点点击仍然用于跳转剧情。
 function bindMapViewport() {
   const svg = $(".map-svg");
@@ -1892,14 +2431,19 @@ function bindMapViewport() {
     view.x = clampAxis(view.x, view.width, bounds.minX, bounds.maxX);
     view.y = clampAxis(view.y, view.height, bounds.minY, bounds.maxY);
     svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.width} ${view.height}`);
+    const visualScale = 900 / view.width;
+    svg.classList.toggle("lod-low", visualScale < 0.42);
+    svg.classList.toggle("lod-medium", visualScale >= 0.42 && visualScale < 0.82);
+    svg.classList.toggle("lod-high", visualScale >= 0.82);
     state.mapViewport = { ...view };
   };
   const zoom = (factor, clientX = null, clientY = null) => {
     const rect = svg.getBoundingClientRect();
     const px = clientX === null ? 0.5 : Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
     const py = clientY === null ? 0.5 : Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)));
-    const maxWidth = Math.max(1120, bounds.maxX - bounds.minX);
-    const nextWidth = Math.max(430, Math.min(maxWidth, view.width * factor));
+    const worldWidth = Math.max(900, bounds.maxX - bounds.minX);
+    const maxWidth = worldWidth * 8;
+    const nextWidth = Math.max(70, Math.min(maxWidth, view.width * factor));
     const nextHeight = nextWidth * 470 / 900;
     view.x += (view.width - nextWidth) * px;
     view.y += (view.height - nextHeight) * py;
@@ -1909,12 +2453,12 @@ function bindMapViewport() {
   };
   svg.addEventListener("wheel", (event) => {
     event.preventDefault();
-    zoom(event.deltaY > 0 ? 1.1 : 0.9, event.clientX, event.clientY);
+    zoom(Math.exp(Math.max(-240, Math.min(240, event.deltaY)) * 0.0012), event.clientX, event.clientY);
   }, { passive: false });
 
   let dragging = null;
   svg.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0 || event.target.closest(".map-node, .journey-route")) return;
+    if (event.button !== 0 || event.target.closest(".map-node, .journey-route, .semantic-region")) return;
     dragging = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y };
     svg.classList.add("dragging");
     svg.setPointerCapture(event.pointerId);
@@ -1984,6 +2528,24 @@ function bindMapViewport() {
       apply();
     },
   };
+  $("#map-fit-world")?.addEventListener("click", () => state.mapViewportController.fitAll());
+  $("#map-fit-step")?.addEventListener("click", () => {
+    const event = storyMapSteps()[state.mapStep];
+    const point = state.mapPoints?.get(Number(event?.location_entity_id));
+    if (point) state.mapViewportController.focus(point, true, true);
+  });
+  $("#map-fit-region")?.addEventListener("click", () => {
+    const event = storyMapSteps()[state.mapStep];
+    const locationId = Number(event?.location_entity_id || 0);
+    const region = (state.mapLayout?.regions || []).find((item) => (item.node_ids || []).some((id) => Number(id) === locationId));
+    if (!region) {
+      const point = state.mapPoints?.get(locationId);
+      if (point) state.mapViewportController.focus(point, true, true);
+      return;
+    }
+    const regionPoints = (region.node_ids || []).map((id) => state.mapPoints?.get(Number(id))).filter(Boolean);
+    state.mapViewportController.focusGroup(regionPoints, state.mapPoints?.get(locationId));
+  });
   apply();
 }
 
@@ -1996,6 +2558,12 @@ function syncMap3DStep(event, visibleLocationIds, step, animate) {
   const currentLocationId = event.location_entity_id === null ? null : Number(event.location_entity_id);
   nodes.forEach((node) => {
     if (node.kind === "actor") return;
+    if (node.kind === "region") {
+      node.active = currentLocationId !== null && node.memberIds.includes(currentLocationId);
+      node.focused = true;
+      node.visible = state.mapPresentation === "atlas";
+      return;
+    }
     node.active = currentLocationId !== null && node.locationId === currentLocationId;
     node.visible = true;
     node.focused = state.mapShowFullRoute || visibleLocationIds.has(node.locationId);
@@ -2152,15 +2720,42 @@ function setMapStep(nextStep, animate = true) {
     ? "原文没有确认当前地点，人物标记暂时隐藏"
     : leg?.gap_status === "unknown_path" ? "原文路径有缺口，节点仍完整保留" : "路线连续";
   $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
+  loadStoryContext(event);
   $("#map-evidence")?.addEventListener("click", () => openEventSource(event));
   $$(".map-history-step").forEach((button) => button.addEventListener("click", () => {
     const historyStep = journey.findIndex((item) => Number(item.id) === Number(button.dataset.event));
     if (historyStep >= 0) setMapStep(historyStep);
   }));
+  renderMapChronologyList(journey, step, true);
   if (step === journey.length - 1 && state.mapPlaybackState === "playing") {
     stopMapPlayback(false);
     state.mapPlaybackState = "complete";
     $("#map-play").textContent = "重新播放";
+  }
+}
+
+async function loadStoryContext(event) {
+  const serial = ++state.storyContextSerial;
+  try {
+    const context = await api(`/api/books/${state.bookId}/story-context/${event.id}?through_segment=${Number($("#progress-slider").value)}`);
+    if (serial !== state.storyContextSerial || Number(storyMapSteps()[state.mapStep]?.id) !== Number(event.id)) return;
+    const card = $("#map-event-card");
+    if (!card) return;
+    const useful = (context.items || []).filter((item) => String(item.value || "").trim()).slice(0, 5);
+    const systems = (context.systems || []).slice(0, 2);
+    const section = document.createElement("section");
+    section.className = "story-knowledge-capsule";
+    section.innerHTML = `<header><strong>当前剧情需要知道</strong><span>不超过防剧透进度</span></header>${useful.length ? `<ul>${useful.map((item) => `<li><b>${escapeHtml(item.name)}</b><span>${escapeHtml(item.value)}</span></li>`).join("")}</ul>` : '<p>当前步骤还没有可读且带证据的知识说明</p>'}${systems.length ? `<div class="story-system-links">${systems.map((item) => `<button class="story-system-open" data-system="${item.id}" type="button">${escapeHtml(item.name)} · ${escapeHtml(systemStructureLabel(item.structure_type))}</button>`).join("")}</div>` : ""}${(context.missing_explanations || []).length ? `<button class="button button-quiet story-knowledge-complete" type="button">整理待补知识</button>` : ""}`;
+    card.appendChild(section);
+    section.querySelectorAll(".story-system-open").forEach((button) => button.addEventListener("click", () => { state.view = "systems"; renderView(); }));
+    section.querySelector(".story-knowledge-complete")?.addEventListener("click", async () => {
+      try {
+        const result = await api(`/api/books/${state.bookId}/knowledge/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ instruction: "根据当前剧情涉及对象整理需要补充的解释，所有正式事实必须带逐字原文", segment_ids: [state.overview.segments.find((item) => Number(item.ordinal) === Number(event.first_segment))?.id].filter(Boolean), provider: "auto" }) });
+        toast(`已整理 ${result.candidates.length} 条候选引文，确认前不会写入正式事实`);
+      } catch (error) { toast(error.message, true); }
+    });
+  } catch (error) {
+    if (serial === state.storyContextSerial) console.warn("Story context unavailable", error);
   }
 }
 
@@ -2262,11 +2857,12 @@ function renderWorld(query = "", category = "all") {
   </article>`).join("");
   const empty = emptyState(allNotes.length ? "没有匹配的世界信息" : "还没有世界信息", allNotes.length ? "更换关键词或分类。" : "可以从原文分析生成，也可以人工创建一条明确标记的补充内容。");
   $("#view-panel").innerHTML = `${panelHead("世界信息", "可搜索、分类、创建、编辑、二次生成、归档和恢复；原文事实与人工补充始终分开标记。")}
-    <div class="world-toolbar"><input id="world-search" class="search-input" type="search" value="${escapeHtml(query)}" placeholder="搜索规则、势力、背景或地理" aria-label="搜索世界信息"><select id="world-category" class="search-input" aria-label="筛选世界信息分类">${options}</select><button id="world-archived" class="button button-quiet" type="button">归档记录</button></div>
+    <div class="world-toolbar"><input id="world-search" class="search-input" type="search" value="${escapeHtml(query)}" placeholder="搜索规则、势力、背景或地理" aria-label="搜索世界信息"><select id="world-category" class="search-input" aria-label="筛选世界信息分类">${options}</select><button id="world-systems" class="button button-quiet" type="button">体系图谱</button><button id="world-archived" class="button button-quiet" type="button">归档记录</button></div>
     <details class="world-create"><summary>创建世界信息</summary><div class="world-create-form"><label>分类<select id="world-create-category">${categories.map((item) => `<option value="${item}">${escapeHtml(categoryLabels[item] || item)}</option>`).join("")}</select></label><label>标题<input id="world-create-title" maxlength="160" placeholder="例如：灵力修炼层级"></label><label>说明<textarea id="world-create-summary" maxlength="5000" rows="4" placeholder="写清规则、条件、限制或影响；人工内容会明确标记。"></textarea></label><button id="world-create-submit" class="button button-primary" type="button">创建并继续编辑</button></div></details>
     <div id="world-archive-list"></div>${notes.length ? `<div class="card-grid">${cards}</div>` : empty}`;
   $("#world-search").addEventListener("input", (event) => renderWorld(event.target.value, $("#world-category").value));
   $("#world-category").addEventListener("change", (event) => renderWorld($("#world-search").value, event.target.value));
+  $("#world-systems").addEventListener("click", () => { state.view = "systems"; $("#systems-nav").hidden = false; renderView(); });
   $("#world-create-submit").addEventListener("click", async () => {
     const title = $("#world-create-title").value.trim();
     const summary = $("#world-create-summary").value.trim();
@@ -2288,7 +2884,7 @@ function renderWorld(query = "", category = "all") {
     }
   });
   $$(".world-archive").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("归档后不会出现在世界信息中，仍可从归档记录恢复。继续吗？")) return;
+    if (!await confirmAction("归档世界信息", "归档后不会出现在世界信息中，仍可从归档记录恢复", "归档")) return;
     try {
       await api(`/api/world-notes/${button.dataset.id}`, { method: "DELETE" });
       toast("世界信息已归档，可随时恢复。");
@@ -2320,6 +2916,208 @@ async function loadArchivedWorldNotes() {
   } catch (error) {
     host.innerHTML = emptyState("归档记录读取失败", error.message);
   }
+}
+
+function systemStructureLabel(value) {
+  return ({ ordered: "线性等级", hierarchical: "层级结构", partial_order: "部分可比较", network: "关联网络" })[value] || value;
+}
+
+function renderSystems() {
+  const active = (state.systems || []).filter((system) => system.status !== "archived");
+  const cards = active.map((system) => {
+    const nodeById = new Map((system.nodes || []).map((node) => [Number(node.id), node]));
+    const nodes = (system.nodes || []).map((node) => `<div class="system-node-row"><button class="system-node" data-system="${system.id}" data-node="${node.id}" type="button"><strong>${escapeHtml(node.label)}</strong><span>${node.rank_value === null || node.rank_value === undefined ? "不可凭空比较" : `排序值 ${escapeHtml(node.rank_value)}`}</span><small>${node.evidence_id ? "已有原文证据" : "人工说明，尚待补证"}</small></button><span class="system-node-actions"><button class="button button-quiet system-edit-node" data-system="${system.id}" data-node="${node.id}" type="button">编辑</button><button class="button button-danger system-archive-node" data-system="${system.id}" data-node="${node.id}" type="button">归档</button></span></div>`).join("");
+    const relations = (system.relations || []).map((relation) => {
+      const source = nodeById.get(Number(relation.source_node_id));
+      const target = nodeById.get(Number(relation.target_node_id));
+      const label = ({ higher_than: "高于", contains: "包含", reports_to: "隶属于", precedes: "先于", related: "相关" })[relation.relation_type] || relation.relation_type;
+      return `<li><strong>${escapeHtml(source?.label || "未知节点")}</strong><span>${escapeHtml(label)}</span><strong>${escapeHtml(target?.label || "未知节点")}</strong>${relation.evidence_id ? '<small>原文已核验</small>' : '<small>待补证</small>'}<span class="system-relation-actions"><button class="button button-quiet system-edit-relation" data-system="${system.id}" data-relation="${relation.id}" type="button">编辑</button><button class="button button-danger system-archive-relation" data-relation="${relation.id}" type="button">归档</button></span></li>`;
+    }).join("");
+    const orderedClass = system.structure_type === "ordered" ? " ordered" : "";
+    return `<article class="system-card${orderedClass}" data-system="${system.id}"><header><div><span class="eyebrow">${escapeHtml(systemStructureLabel(system.structure_type))}</span><h3>${escapeHtml(system.name)}</h3><p>${escapeHtml(system.description || "当前体系尚无读者说明")}</p></div><div class="system-card-actions"><button class="button button-quiet system-add-node" data-system="${system.id}" type="button">添加有证据节点</button><button class="button button-quiet system-edit" data-system="${system.id}" type="button">编辑体系</button><button class="button button-danger system-archive" data-system="${system.id}" type="button">归档体系</button></div></header><div class="system-node-track">${nodes || emptyState("体系还没有节点", "只在原文明确出现后添加，无法比较的对象会并列显示")}</div>${relations ? `<ol class="system-relations">${relations}</ol>` : ""}${(system.nodes || []).length >= 2 ? `<button class="button button-quiet system-add-relation" data-system="${system.id}" type="button">连接体系节点</button>` : ""}</article>`;
+  }).join("");
+  $("#view-panel").innerHTML = panelHead("体系图谱", "不同体系分别保存，找不到统一高低关系时明确显示不可比较") + `<div class="system-toolbar"><button id="system-create" class="button button-primary" type="button">新建体系</button><span>${active.length ? `${active.length} 套体系 · ${(active.flatMap((item) => item.nodes || [])).length} 个节点` : "尚未发现有证据的体系"}</span></div><div class="system-grid">${cards || emptyState("当前作品没有可确认的体系", "系统不会为了生成漂亮阶梯而虚构等级，你仍可从原文建立组织、阶层或分类体系")}</div>`;
+  $("#system-create").addEventListener("click", createSystemFromUi);
+  $$(".system-add-node").forEach((button) => button.addEventListener("click", () => createSystemNodeFromUi(Number(button.dataset.system))));
+  $$(".system-add-relation").forEach((button) => button.addEventListener("click", () => createSystemRelationFromUi(Number(button.dataset.system))));
+  $$(".system-edit").forEach((button) => button.addEventListener("click", () => editSystemFromUi(Number(button.dataset.system))));
+  $$(".system-archive").forEach((button) => button.addEventListener("click", () => archiveSystemFromUi(Number(button.dataset.system))));
+  $$(".system-edit-node").forEach((button) => button.addEventListener("click", () => editSystemNodeFromUi(Number(button.dataset.system), Number(button.dataset.node))));
+  $$(".system-archive-node").forEach((button) => button.addEventListener("click", () => archiveSystemNodeFromUi(Number(button.dataset.node))));
+  $$(".system-edit-relation").forEach((button) => button.addEventListener("click", () => editSystemRelationFromUi(Number(button.dataset.system), Number(button.dataset.relation))));
+  $$(".system-archive-relation").forEach((button) => button.addEventListener("click", () => archiveSystemRelationFromUi(Number(button.dataset.relation))));
+}
+
+async function createSystemFromUi() {
+  const values = await formAction({
+    title: "建立一套体系",
+    description: "体系可以是等级、组织树、部分顺序或只有关联的网络",
+    submitLabel: "创建体系",
+    fields: [
+      { name: "name", label: "体系名称", required: true, placeholder: "例如 修炼境界或王室职位" },
+      { name: "category", label: "体系类别", type: "select", options: [
+        { value: "ability", label: "修炼或能力" }, { value: "organization", label: "组织职位" },
+        { value: "social", label: "社会或政治阶层" }, { value: "item", label: "物品与技能品阶" },
+        { value: "lineage", label: "血统与分类" }, { value: "other", label: "其他体系" },
+      ] },
+      { name: "structure_type", label: "结构形式", type: "select", options: [
+        { value: "ordered", label: "明确线性等级" }, { value: "hierarchical", label: "组织树或包含" },
+        { value: "partial_order", label: "部分可比较" }, { value: "network", label: "只有关联，不比较高低" },
+      ] },
+      { name: "description", label: "读者说明", type: "textarea", rows: 4 },
+    ],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/books/${state.bookId}/systems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    state.systems = await api(`/api/books/${state.bookId}/systems`);
+    $("#systems-nav").hidden = false;
+    renderSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function createSystemNodeFromUi(systemId) {
+  const values = await formAction({
+    title: "添加体系节点",
+    description: "节点顺序必须来自原文，证据不足时不要填写排序值",
+    submitLabel: "核验并添加",
+    fields: [
+      { name: "label", label: "节点名称", required: true },
+      { name: "description", label: "说明", type: "textarea", rows: 3 },
+      { name: "rank_value", label: "排序值，可留空", type: "number", hint: "数字只用于明确可排序的体系" },
+      { name: "segment_id", label: "原文章节", type: "select", required: true, options: state.overview.segments.map((item) => ({ value: item.id, label: item.chapter_title })) },
+      { name: "evidence_quote", label: "逐字原文", type: "textarea", rows: 4, required: true },
+    ],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/systems/${systemId}/nodes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...values, rank_value: values.rank_value === "" ? null : Number(values.rank_value), segment_id: Number(values.segment_id), evidence_quote: String(values.evidence_quote).trim() }) });
+    state.systems = await api(`/api/books/${state.bookId}/systems`);
+    renderSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function createSystemRelationFromUi(systemId) {
+  const system = state.systems.find((item) => Number(item.id) === systemId);
+  const nodeOptions = (system?.nodes || []).map((item) => ({ value: item.id, label: item.label }));
+  const values = await formAction({
+    title: "连接体系节点",
+    description: "无法比较时不要建立高低关系，可使用相关或保持并列",
+    submitLabel: "核验并连接",
+    fields: [
+      { name: "source_node_id", label: "起点", type: "select", options: nodeOptions, required: true },
+      { name: "relation_type", label: "关系", type: "select", options: [
+        { value: "higher_than", label: "高于" }, { value: "contains", label: "包含" },
+        { value: "reports_to", label: "隶属于" }, { value: "precedes", label: "先于" }, { value: "related", label: "相关" },
+      ] },
+      { name: "target_node_id", label: "终点", type: "select", options: nodeOptions, required: true },
+      { name: "segment_id", label: "原文章节", type: "select", options: state.overview.segments.map((item) => ({ value: item.id, label: item.chapter_title })), required: true },
+      { name: "evidence_quote", label: "逐字原文", type: "textarea", rows: 4, required: true },
+    ],
+  });
+  if (!values) return;
+  if (values.source_node_id === values.target_node_id) return toast("体系关系不能连接同一个节点", true);
+  try {
+    await api(`/api/systems/${systemId}/relations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...values, source_node_id: Number(values.source_node_id), target_node_id: Number(values.target_node_id), segment_id: Number(values.segment_id), evidence_quote: String(values.evidence_quote).trim() }) });
+    state.systems = await api(`/api/books/${state.bookId}/systems`);
+    renderSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function reloadSystems() {
+  state.systems = await api(`/api/books/${state.bookId}/systems`);
+  $("#systems-nav").hidden = !(state.systems || []).some((item) => item.status === "active");
+  renderSystems();
+}
+
+async function editSystemFromUi(systemId) {
+  const system = state.systems.find((item) => Number(item.id) === systemId);
+  if (!system) return;
+  const values = await formAction({
+    title: "编辑体系",
+    submitLabel: "保存体系",
+    fields: [
+      { name: "name", label: "体系名称", required: true, value: system.name },
+      { name: "category", label: "体系类别", type: "select", value: system.category, options: [
+        { value: "ability", label: "修炼或能力" }, { value: "organization", label: "组织职位" },
+        { value: "social", label: "社会或政治阶层" }, { value: "item", label: "物品与技能品阶" },
+        { value: "lineage", label: "血统与分类" }, { value: "other", label: "其他体系" },
+      ] },
+      { name: "structure_type", label: "结构形式", type: "select", value: system.structure_type, options: [
+        { value: "ordered", label: "明确线性等级" }, { value: "hierarchical", label: "组织树或包含" },
+        { value: "partial_order", label: "部分可比较" }, { value: "network", label: "只有关联，不比较高低" },
+      ] },
+      { name: "description", label: "读者说明", type: "textarea", rows: 4, value: system.description },
+    ],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/systems/${systemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function archiveSystemFromUi(systemId) {
+  if (!await confirmAction("归档整套体系", "节点、关系和原文证据都会保留，可以通过数据记录恢复", "归档")) return;
+  try {
+    await api(`/api/systems/${systemId}`, { method: "DELETE" });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function editSystemNodeFromUi(systemId, nodeId) {
+  const node = state.systems.find((item) => Number(item.id) === systemId)?.nodes?.find((item) => Number(item.id) === nodeId);
+  if (!node) return;
+  const values = await formAction({
+    title: "编辑体系节点",
+    description: "本次修改不会替换已经绑定的原文证据",
+    submitLabel: "保存节点",
+    fields: [
+      { name: "label", label: "节点名称", required: true, value: node.label },
+      { name: "description", label: "说明", type: "textarea", rows: 3, value: node.description },
+      { name: "rank_value", label: "排序值，可留空", type: "number", value: node.rank_value ?? "" },
+    ],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/system-nodes/${nodeId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ label: values.label, description: values.description, rank_value: values.rank_value === "" ? null : Number(values.rank_value), clear_rank: values.rank_value === "" }) });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function archiveSystemNodeFromUi(nodeId) {
+  if (!await confirmAction("归档体系节点", "与此节点相连的关系也会归档，原文证据不会删除", "归档")) return;
+  try {
+    await api(`/api/system-nodes/${nodeId}`, { method: "DELETE" });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function editSystemRelationFromUi(systemId, relationId) {
+  const relation = state.systems.find((item) => Number(item.id) === systemId)?.relations?.find((item) => Number(item.id) === relationId);
+  if (!relation) return;
+  const values = await formAction({
+    title: "编辑体系关系",
+    description: "只修改关系说明，原文证据保持不变",
+    submitLabel: "保存关系",
+    fields: [{ name: "relation_type", label: "关系", type: "select", value: relation.relation_type, options: [
+      { value: "higher_than", label: "高于" }, { value: "contains", label: "包含" },
+      { value: "reports_to", label: "隶属于" }, { value: "precedes", label: "先于" }, { value: "related", label: "相关" },
+    ] }],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/system-relations/${relationId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
+}
+
+async function archiveSystemRelationFromUi(relationId) {
+  if (!await confirmAction("归档体系关系", "关系从读者视图隐藏，原文证据继续保留", "归档")) return;
+  try {
+    await api(`/api/system-relations/${relationId}`, { method: "DELETE" });
+    await reloadSystems();
+  } catch (error) { toast(error.message, true); }
 }
 
 function renderDatabase(query = "", category = "all") {
@@ -2380,7 +3178,7 @@ async function openConceptDetails(conceptId) {
     const claimCards = claims.map((claim) => {
       const value = typeof claim.value === "string" ? claim.value : JSON.stringify(claim.value, null, 2);
       const originalAction = ["entity", "world_note", "entry"].includes(claim.subject_type) ? `<button class="button button-quiet knowledge-original" data-type="${escapeHtml(claim.subject_type)}" data-id="${claim.subject_id}" type="button">打开原记录</button>` : "";
-      return `<article class="evidence-card knowledge-claim" data-claim="${claim.id}"><strong>${escapeHtml(claim.predicate)}</strong><p>${escapeHtml(value)}</p><small>${escapeHtml(claim.source_kind)} · ${escapeHtml(claim.status)} · ${Number(claim.evidence_count || 0)} 条证据</small><div class="review-actions">${originalAction}${claim.evidence_count ? `<button class="button button-quiet knowledge-claim-evidence" data-id="${claim.id}" type="button">查看证据</button>` : ""}<button class="button button-danger knowledge-claim-deprecate" data-id="${claim.id}" type="button">弃用</button></div><details class="record-editor"><summary>修改事实</summary><textarea class="knowledge-claim-value">${escapeHtml(value)}</textarea><select class="knowledge-claim-status"><option value="accepted" ${claim.status === "accepted" ? "selected" : ""}>正式</option><option value="parallel" ${claim.status === "parallel" ? "selected" : ""}>并列</option><option value="needs_resolution" ${claim.status === "needs_resolution" ? "selected" : ""}>待解决</option><option value="deprecated" ${claim.status === "deprecated" ? "selected" : ""}>弃用</option></select><button class="button button-primary knowledge-claim-save" data-id="${claim.id}" type="button">保存修改</button></details></article>`;
+      return `<article class="evidence-card knowledge-claim" data-claim="${claim.id}"><strong>${escapeHtml(knowledgePredicateLabel(claim.predicate))}</strong><p>${escapeHtml(value)}</p><small>${escapeHtml(knowledgeSourceLabel(claim.source_kind))} · ${escapeHtml(knowledgeStatusLabel(claim.status))} · ${Number(claim.evidence_count || 0)} 条证据</small><div class="review-actions">${originalAction}${claim.evidence_count ? `<button class="button button-quiet knowledge-claim-evidence" data-id="${claim.id}" type="button">查看证据</button>` : ""}<button class="button button-danger knowledge-claim-deprecate" data-id="${claim.id}" type="button">弃用</button></div><details class="record-editor"><summary>修改事实</summary><textarea class="knowledge-claim-value">${escapeHtml(value)}</textarea><select class="knowledge-claim-status"><option value="accepted" ${claim.status === "accepted" ? "selected" : ""}>正式</option><option value="parallel" ${claim.status === "parallel" ? "selected" : ""}>并列</option><option value="needs_resolution" ${claim.status === "needs_resolution" ? "selected" : ""}>待解决</option><option value="deprecated" ${claim.status === "deprecated" ? "selected" : ""}>弃用</option></select><button class="button button-primary knowledge-claim-save" data-id="${claim.id}" type="button">保存修改</button></details></article>`;
     }).join("") || '<p class="detail-summary">当前概念还没有原子事实。</p>';
     const revisionCards = revisions.length ? revisions.map((item) => `<li><strong>${escapeHtml(item.action)}</strong><span>${escapeHtml(item.created_at)}</span></li>`).join("") : "<li><span>还没有人工修改记录</span></li>";
     $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(concept.description || "当前概念没有读者说明。")}</p><div class="detail-row"><span>分类</span><strong>${escapeHtml(categoryLabels[concept.category] || concept.category)}</strong></div><div class="detail-row"><span>别名</span><strong>${escapeHtml((concept.aliases || []).join("、") || "—")}</strong></div><div class="record-editor"><label>名称<input id="concept-edit-label" value="${escapeHtml(concept.preferred_label)}"></label><label>说明<textarea id="concept-edit-description">${escapeHtml(concept.description || "")}</textarea></label><label>别名<input id="concept-edit-aliases" value="${escapeHtml((concept.aliases || []).join("，"))}"></label><div class="review-actions"><button id="concept-save" class="button button-primary" type="button">保存概念</button><button id="concept-archive" class="button button-danger" type="button">归档概念</button></div></div><h3 class="evidence-title">原子事实</h3>${claimCards}<details class="record-editor"><summary>新增事实</summary><label>属性<input id="knowledge-claim-predicate" maxlength="120" placeholder="例如：使用条件"></label><label>值<textarea id="knowledge-claim-value"></textarea></label><label>来源<select id="knowledge-claim-source"><option value="human_note">人工说明</option><option value="original_text">原文事实</option><option value="external_fact">外部资料</option></select></label><label>原文章节<select id="knowledge-claim-segment">${sourceOptions}</select></label><label>逐字引文<textarea id="knowledge-claim-quote" maxlength="800"></textarea></label><button id="knowledge-claim-create" class="button button-primary" type="button">保存事实</button></details><details class="record-editor knowledge-history"><summary>修改记录 · ${revisions.length}</summary><ul>${revisionCards}</ul></details>`;
@@ -2391,7 +3189,7 @@ async function openConceptDetails(conceptId) {
       } catch (error) { toast(error.message, true); }
     });
     $("#concept-archive").addEventListener("click", async () => {
-      if (!window.confirm("归档概念后，事实和证据仍会保留。继续吗？")) return;
+      if (!await confirmAction("归档知识概念", "归档概念后，事实和证据仍会保留", "归档")) return;
       try { await api(`/api/concepts/${conceptId}`, { method: "DELETE" }); closeInspector(); await loadOverview(Number($("#progress-slider").value), true); } catch (error) { toast(error.message, true); }
     });
     $("#knowledge-claim-create").addEventListener("click", async () => {
@@ -2538,7 +3336,7 @@ async function trialPromptFromUi() {
 }
 
 async function promotePromptFromUi() {
-  if (!window.confirm("确认把这版提示词提升为正式版本吗？以后新任务会使用它，旧结果仍可按版本追溯。")) return;
+  if (!await confirmAction("发布提示词", "以后新任务会使用这个版本，旧结果仍可按版本追溯", "发布")) return;
   try {
     const result = await api(`/api/prompt-bundles/${state.promptDetail.id}/promote?book_id=${state.bookId}`, { method: "POST" });
     toast(`提示词 ${result.version} 已经成为正式版本。`);
@@ -2548,7 +3346,7 @@ async function promotePromptFromUi() {
 }
 
 async function rollbackPromptFromUi() {
-  if (!window.confirm("确认恢复这个历史正式版本吗？当前正式版本会归档，所有历史仍然保留。")) return;
+  if (!await confirmAction("恢复提示词版本", "当前正式版本会归档，所有历史仍然保留", "恢复")) return;
   try {
     const result = await api(`/api/prompt-bundles/${state.promptDetail.id}/rollback?book_id=${state.bookId}&confirmed=true`, { method: "POST" });
     toast(`已经恢复提示词 ${result.version}。`);
@@ -2585,18 +3383,18 @@ function bindCollaborationControls() {
     try { await api(`/api/books/${state.bookId}/domain-rules`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statement, task_key: $("#domain-rule-task").value }) }); state.promptDetail = null; await refreshControlPlane(); } catch (error) { toast(error.message, true); }
   });
   $$(".rule-toggle").forEach((button) => button.addEventListener("click", async () => { try { await api(`/api/domain-rules/${button.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: button.dataset.active === "true" }) }); state.promptDetail = null; await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
-  $$(".rule-delete").forEach((button) => button.addEventListener("click", async () => { if (!window.confirm("删除这条阅读规则吗？")) return; try { await api(`/api/domain-rules/${button.dataset.id}`, { method: "DELETE" }); state.promptDetail = null; await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
+  $$(".rule-delete").forEach((button) => button.addEventListener("click", async () => { if (!await confirmAction("删除阅读规则", "删除后，新分析不会再使用这条规则", "删除")) return; try { await api(`/api/domain-rules/${button.dataset.id}`, { method: "DELETE" }); state.promptDetail = null; await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
   $("#external-fact-save")?.addEventListener("click", async () => {
     const statement = $("#external-fact-statement").value.trim(); const source = $("#external-fact-source").value.trim();
     if (!statement || !source) return toast("外部资料必须同时填写内容和来源。", true);
     try { await api(`/api/books/${state.bookId}/external-facts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ statement, source_label: source, source_url: $("#external-fact-url").value.trim() }) }); await refreshControlPlane(); } catch (error) { toast(error.message, true); }
   });
   $$(".fact-toggle").forEach((button) => button.addEventListener("click", async () => { try { await api(`/api/external-facts/${button.dataset.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ active: button.dataset.active === "true" }) }); await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
-  $$(".fact-delete").forEach((button) => button.addEventListener("click", async () => { if (!window.confirm("删除这条外部资料吗？")) return; try { await api(`/api/external-facts/${button.dataset.id}`, { method: "DELETE" }); await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
+  $$(".fact-delete").forEach((button) => button.addEventListener("click", async () => { if (!await confirmAction("删除外部资料", "删除后，这条资料不会再参与后续分析", "删除")) return; try { await api(`/api/external-facts/${button.dataset.id}`, { method: "DELETE" }); await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
   $$(".route-toggle").forEach((button) => button.addEventListener("click", async () => { try { await api(`/api/model-routes/${button.dataset.provider}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: button.dataset.enabled === "true" }) }); await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
   $$(".route-reset").forEach((button) => button.addEventListener("click", async () => { try { await api(`/api/model-routes/${button.dataset.provider}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reset_circuit: true }) }); await refreshControlPlane(); } catch (error) { toast(error.message, true); } }));
   $("#model-race")?.addEventListener("click", async () => {
-    if (!window.confirm("这会让所有当前可用候选模型分析同一个片段。API 会产生费用，Codex Luna 会消耗 ChatGPT 计划额度。继续吗？")) return;
+    if (!await confirmAction("运行模型赛马", "所有可用候选模型会分析同一个片段，API 会产生费用，Codex Luna 会消耗 ChatGPT 计划额度", "开始运行")) return;
     const button = $("#model-race"); button.disabled = true; button.textContent = "正在运行同片段赛马…";
     const candidates = state.providers.filter((item) => item.available && ["deepseek", "moonshot", "codex_luna"].includes(item.id)).map((item) => item.id);
     try {
@@ -2771,10 +3569,14 @@ async function refreshBenchmarkCandidates() {
 }
 
 async function resolveBenchmarkCandidate(candidateId, action) {
-  const note = action === "accept"
-    ? window.prompt("写下确认依据，可留空并使用候选的原文核对说明。")
-    : window.prompt("写下拒绝原因，避免同类候选再次混入金标准。");
-  if (note === null) return;
+  const values = await formAction({
+    title: action === "accept" ? "确认金标准候选" : "拒绝金标准候选",
+    description: action === "accept" ? "确认后会计入准确率门禁" : "拒绝原因会进入回归记录，避免同类候选再次混入",
+    submitLabel: action === "accept" ? "确认并计入" : "拒绝候选",
+    fields: [{ name: "note", label: "判断依据", type: "textarea", rows: 4, required: action !== "accept" }],
+  });
+  if (!values) return;
+  const note = String(values.note || "").trim();
   try {
     await api(`/api/benchmark-candidates/${candidateId}/resolve`, {
       method: "POST",
@@ -2816,7 +3618,7 @@ function bindBenchmarkPanel() {
     resolveBenchmarkCandidate(Number(button.dataset.id), "reject");
   }));
   $$(".benchmark-delete").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("删除这条人工金标准吗？删除后会重新计算准确率门禁。")) return;
+    if (!await confirmAction("删除人工金标准", "删除后会重新计算准确率门禁", "删除")) return;
     try {
       await api(`/api/benchmarks/${button.dataset.id}`, { method: "DELETE" });
       if (Number(state.benchmarkEditingId) === Number(button.dataset.id)) state.benchmarkEditingId = null;
@@ -2861,10 +3663,19 @@ function renderQuality() {
   const modelReviewItems = unresolvedReviews.length + unresolvedLocations.length;
   const resolvedHistory = resolvedConflictCount ? `<details class="conflict-history"><summary>查看 ${resolvedConflictCount} 条已处理记录</summary><div class="conflict-history-list">${resolvedIdentities.map((item) => `<article><div><strong>身份 · ${escapeHtml(item.left_name)} ↔ ${escapeHtml(item.right_name)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.reason)}</small></div>${["auto_separate", "rejected"].includes(item.status) ? `<div class="conflict-actions"><button class="button button-quiet merge-choice" data-keep="${item.left_entity_id}" data-remove="${item.right_entity_id}" type="button">改为合并到 ${escapeHtml(item.left_name)}</button><button class="button button-quiet merge-choice" data-keep="${item.right_entity_id}" data-remove="${item.left_entity_id}" type="button">改为合并到 ${escapeHtml(item.right_name)}</button></div>` : ""}</article>`).join("")}${resolvedContradictions.map((item) => `<article><div><strong>事实 · ${escapeHtml(item.left.label)} ↔ ${escapeHtml(item.right.label)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.summary)}</small></div><div class="conflict-actions"><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="contextual" type="button">改为不同情境</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="false_positive" type="button">改为误报</button><button class="button button-danger contradiction-action" data-id="${item.id}" data-action="quarantine" type="button">改为隔离</button></div></article>`).join("")}${resolvedTimeConstraints.map((item) => `<article><div><strong>时间 · ${escapeHtml(item.earlier_title)} → ${escapeHtml(item.later_title)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.reason)}</small></div><div class="conflict-actions"><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="reverse" type="button">改为反转</button><button class="button button-danger time-conflict-action" data-id="${item.id}" data-action="reject" type="button">改为舍弃</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="quarantine" type="button">改为隔离</button></div></article>`).join("")}</div></details>` : "";
   const conflictPanel = `<section class="conflict-center"><div class="conflict-center-head"><div><h3>冲突处理中心</h3><p>自动处理只使用本地规则，不调用模型、不删除原始事实。证据不足的身份保持分离，事实冲突进入隔离区，循环时间约束会被舍弃。</p></div>${autoConflictCount ? `<button id="quality-auto-close" class="button button-primary" type="button">免费自动处理 ${autoConflictCount} 项</button>` : '<span class="conflict-zero">当前无需处理</span>'}</div>${identityConflicts.length ? `<section class="conflict-group"><h4>身份候选 · ${identityConflicts.length}</h4><div class="conflict-card-list">${identityConflicts.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.left_name)} ↔ ${escapeHtml(item.right_name)}</strong><p>${escapeHtml(item.reason)} · 把握 ${Math.round(Number(item.confidence || 0) * 100)}%</p></div><div class="conflict-actions"><button class="button button-quiet merge-choice" data-keep="${item.left_entity_id}" data-remove="${item.right_entity_id}" type="button">合并为 ${escapeHtml(item.left_name)}</button><button class="button button-quiet merge-choice" data-keep="${item.right_entity_id}" data-remove="${item.left_entity_id}" type="button">合并为 ${escapeHtml(item.right_name)}</button><button class="button button-danger merge-reject" data-id="${item.id}" type="button">保持两个身份</button></div></article>`).join("")}</div></section>` : ""}${contradictions.length ? `<section class="conflict-group"><h4>事实冲突 · ${contradictions.length}</h4><div class="conflict-card-list">${contradictions.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.left.label)} ↔ ${escapeHtml(item.right.label)}</strong><p>${escapeHtml(item.summary)}</p><small>${escapeHtml(item.left.summary)} ｜ ${escapeHtml(item.right.summary)}</small></div><div class="conflict-actions"><button class="button button-quiet target-button" data-type="${escapeHtml(item.left.type)}" data-id="${item.left.id}" type="button">查看左侧</button><button class="button button-quiet target-button" data-type="${escapeHtml(item.right.type)}" data-id="${item.right.id}" type="button">查看右侧</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="contextual" type="button">属于不同情境</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="false_positive" type="button">确认误报</button><button class="button button-danger contradiction-action" data-id="${item.id}" data-action="quarantine" type="button">隔离待查</button></div></article>`).join("")}</div></section>` : ""}${timeConflicts.length ? `<section class="conflict-group"><h4>时间顺序冲突 · ${timeConflicts.length}</h4><div class="conflict-card-list">${timeConflicts.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.earlier_title)} → ${escapeHtml(item.later_title)}</strong><p>${escapeHtml(item.reason || "该约束会造成时间循环。")}</p></div><div class="conflict-actions"><button class="button button-quiet target-button" data-type="event" data-id="${item.earlier_event_id}" type="button">查看前项</button><button class="button button-quiet target-button" data-type="event" data-id="${item.later_event_id}" type="button">查看后项</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="reverse" type="button">反转顺序</button><button class="button button-danger time-conflict-action" data-id="${item.id}" data-action="reject" type="button">舍弃约束</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="quarantine" type="button">隔离待查</button></div></article>`).join("")}</div></section>` : ""}${!autoConflictCount ? '<p class="conflict-complete">身份、事实和时间约束没有悬挂冲突。</p>' : ""}${resolvedHistory}</section>`;
-  const reviewPanel = `<section class="quality-resolution"><div><h3>关系与地图门禁</h3><p>${modelReviewItems ? `还有 ${modelReviewItems} 项需要模型复审或人工补证。调用模型前会继续使用任务预算。` : "关系与地图项目已经闭环，不需要额外模型调用。"}</p></div>${modelReviewItems ? '<button id="quality-retry" class="button button-quiet" type="button">调用模型复审，可能计费</button>' : ""}</section>${unresolvedReviews.length ? `<div class="connectivity-resolution-list">${unresolvedReviews.map((item) => `<article><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reason)} · 已扫描 ${item.scanned_segment_count} 个章节、${item.mention_count} 次提及</small></span><div><button class="button button-quiet target-button" data-type="entity" data-id="${item.entity_id}" type="button">查看人物</button><button class="button button-quiet connectivity-link" data-review="${item.id}" data-entity="${item.entity_id}" type="button">用原文补关系</button><button class="button button-danger connectivity-isolated" data-review="${item.id}" type="button">确认确实孤立</button></div></article>`).join("")}</div>` : ""}${unresolvedLocations.length ? `<div class="connectivity-resolution-list location-resolution-list">${unresolvedLocations.map((item) => `<article><span><strong>${escapeHtml(item.event_title)}</strong><small>${escapeHtml(item.reason)} · ${escapeHtml(chapterForSegment(item.event_first_segment))}</small></span><div><button class="button button-quiet target-button" data-type="event" data-id="${item.event_id}" type="button">查看剧情</button><button class="button button-primary location-link" data-event="${item.event_id}" type="button">用原文确认地点</button></div></article>`).join("")}</div>` : ""}`;
+  const reviewPanel = `<section class="quality-resolution"><div><h3>关系与地图门禁</h3><p>${modelReviewItems ? `还有 ${modelReviewItems} 项需要模型复审或人工补证。调用模型前会继续使用任务预算。` : "关系与地图项目已经闭环，不需要额外模型调用。"}</p></div>${modelReviewItems ? '<button id="quality-retry" class="button button-quiet" type="button">调用模型复审，可能计费</button>' : ""}</section>${unresolvedReviews.length ? `<div class="connectivity-resolution-list">${unresolvedReviews.map((item) => `<article><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reason)} · 已扫描 ${item.scanned_segment_count} 个原文片段、${item.mention_count} 次提及</small></span><div><button class="button button-quiet target-button" data-type="entity" data-id="${item.entity_id}" type="button">查看人物</button><button class="button button-quiet connectivity-link" data-review="${item.id}" data-entity="${item.entity_id}" type="button">用原文补关系</button><button class="button button-danger connectivity-isolated" data-review="${item.id}" type="button">确认确实孤立</button></div></article>`).join("")}</div>` : ""}${unresolvedLocations.length ? `<div class="connectivity-resolution-list location-resolution-list">${unresolvedLocations.map((item) => `<article><span><strong>${escapeHtml(item.event_title)}</strong><small>${escapeHtml(item.reason)} · ${escapeHtml(chapterForSegment(item.event_first_segment))}</small></span><div><button class="button button-quiet target-button" data-type="event" data-id="${item.event_id}" type="button">查看剧情</button><button class="button button-primary location-link" data-event="${item.event_id}" type="button">用原文确认地点</button></div></article>`).join("")}</div>` : ""}`;
   const topologyMetrics = `<div class="quality-topology"><span>关系已连接 <strong>${quality.connectivity_reviewed_connected}</strong></span><span>确认孤立 <strong>${quality.connectivity_confirmed_isolated}</strong></span><span>关系待处理 <strong>${Number(quality.connectivity_pending || 0) + Number(quality.connectivity_ambiguous || 0)}</strong></span><span>地点明确 <strong>${quality.location_explicit_events}</strong></span><span>位置沿用 <strong>${quality.location_inherited_events}</strong></span><span>位置未解 <strong>${quality.location_unresolved_events}</strong></span><span>有效位置覆盖 <strong>${quality.effective_location_coverage_percent ?? "—"}%</strong></span></div>`;
   const benchmarkPanel = renderBenchmarkPanel();
-  $("#view-panel").innerHTML = panelHead("质量检查", "片段覆盖、证据覆盖、主体准确率、关系完整性、地图完整性和每次模型费用分别计算。") + `<div class="quality-body">${metrics}${topologyMetrics}${benchmarkPanel}${conflictPanel}${reviewPanel}${jobHistory}${ledgerTable}${issues}</div>`;
+  const releaseReady = Boolean(quality.accuracy_gate_passed) && Number(quality.unresolved_merges || 0) === 0 && modelReviewItems === 0 && autoConflictCount === 0;
+  const blockedCount = Number(!quality.accuracy_gate_passed) + Number(quality.unresolved_merges || 0) + modelReviewItems + autoConflictCount;
+  const activeTab = state.qualityTab;
+  const qualityTabs = `<div class="quality-tabs" role="tablist"><button class="quality-tab${activeTab === "pending" ? " active" : ""}" data-tab="pending" type="button">待处理 <span>${modelReviewItems + autoConflictCount}</span></button><button class="quality-tab${activeTab === "gold" ? " active" : ""}" data-tab="gold" type="button">金标准 <span>${quality.benchmark_cases || 0}</span></button><button class="quality-tab${activeTab === "cost" ? " active" : ""}" data-tab="cost" type="button">成本与运行</button><button class="quality-tab${activeTab === "resolved" ? " active" : ""}" data-tab="resolved" type="button">检查结果</button></div>`;
+  const releaseSummary = `<section class="release-decision ${releaseReady ? "ready" : "blocked"}"><div><span class="eyebrow">当前候选版</span><h3>${releaseReady ? "本书通过当前发布门禁" : "本书暂时不能标记为正式达标"}</h3><p>${releaseReady ? "关键结构、证据与人工案例已经通过当前检查" : `${blockedCount} 类阻断仍需处理，候选版可以继续测试，但不能声称达到正式 95% 门槛`}</p></div><strong>${releaseReady ? "可以发布" : "候选版"}</strong></section>`;
+  $("#view-panel").innerHTML = panelHead("质量工作台", "先看能否发布和下一项操作，再按任务进入证据、金标准或成本记录") + `<div class="quality-body">${releaseSummary}${metrics}${qualityTabs}<section class="quality-tab-panel" data-panel="pending" ${activeTab === "pending" ? "" : "hidden"}>${conflictPanel}${reviewPanel}</section><section class="quality-tab-panel" data-panel="gold" ${activeTab === "gold" ? "" : "hidden"}>${benchmarkPanel}</section><section class="quality-tab-panel" data-panel="cost" ${activeTab === "cost" ? "" : "hidden"}>${jobHistory}${ledgerTable}</section><section class="quality-tab-panel" data-panel="resolved" ${activeTab === "resolved" ? "" : "hidden"}>${topologyMetrics}${issues}</section></div>`;
+  $$(".quality-tab").forEach((button) => button.addEventListener("click", () => {
+    state.qualityTab = button.dataset.tab;
+    renderQuality();
+  }));
   $("#quality-auto-close")?.addEventListener("click", autoCloseConflicts);
   $("#quality-retry")?.addEventListener("click", retryQualityChecks);
   $$(".connectivity-isolated").forEach((button) => button.addEventListener("click", () => confirmConnectivityIsolated(Number(button.dataset.review))));
@@ -2914,8 +3725,14 @@ async function resolveContradiction(id, action) {
     false_positive: "两条记录可以同时成立，这一冲突属于自动检查误报。",
     quarantine: "当前证据不足以裁决，先从正式结论中隔离并保留原始证据。",
   };
-  const reason = window.prompt("请用陈述句记录这次判断依据。", defaults[action]);
-  if (!reason) return;
+  const values = await formAction({
+    title: "处理事实冲突",
+    description: "请用陈述句记录判断依据，原始记录和证据不会被删除",
+    submitLabel: "保存处理结果",
+    fields: [{ name: "reason", label: "判断依据", type: "textarea", value: defaults[action], rows: 4, required: true }],
+  });
+  if (!values) return;
+  const reason = String(values.reason).trim();
   try {
     await api(`/api/contradictions/${id}`, {
       method: "PATCH",
@@ -2935,8 +3752,14 @@ async function resolveTimeConflict(id, action) {
     reject: "该顺序约束会形成循环，舍弃约束并保留两件剧情事件。",
     quarantine: "当前证据不足以确定先后，暂时隔离该约束。",
   };
-  const reason = window.prompt("请用陈述句记录这次判断依据。", defaults[action]);
-  if (!reason) return;
+  const values = await formAction({
+    title: "处理时间顺序冲突",
+    description: "说明为何反转、舍弃或隔离这条约束，剧情事件本身会继续保留",
+    submitLabel: "保存时间判断",
+    fields: [{ name: "reason", label: "判断依据", type: "textarea", value: defaults[action], rows: 4, required: true }],
+  });
+  if (!values) return;
+  const reason = String(values.reason).trim();
   try {
     await api(`/api/time-conflicts/${id}`, {
       method: "PATCH",
@@ -2951,8 +3774,14 @@ async function resolveTimeConflict(id, action) {
 }
 
 async function confirmConnectivityIsolated(reviewId) {
-  const reason = window.prompt("请用一句陈述说明为什么确认该人物或势力没有可建立的关系。", "已核对全部提及窗口，没有发现明确关系。");
-  if (!reason) return;
+  const values = await formAction({
+    title: "确认孤立节点",
+    description: "只有核对全部提及窗口后，才能确认没有可建立关系",
+    submitLabel: "确认确实孤立",
+    fields: [{ name: "reason", label: "核对说明", type: "textarea", value: "已核对全部提及窗口，没有发现明确关系", rows: 4, required: true }],
+  });
+  if (!values) return;
+  const reason = String(values.reason).trim();
   try {
     await api(`/api/connectivity-reviews/${reviewId}`, {
       method: "PATCH",
@@ -2968,27 +3797,40 @@ async function confirmConnectivityIsolated(reviewId) {
 
 async function createManualConnectivityLink(reviewId, sourceEntityId) {
   const people = state.overview.entities.filter((item) => ["person", "faction"].includes(item.kind) && Number(item.id) !== sourceEntityId);
-  const targetName = window.prompt(`输入要连接的人物或势力名称。\n例如：${people.slice(0, 8).map((item) => item.name).join("、")}`);
-  if (!targetName) return;
-  const target = people.find((item) => item.name === targetName.trim());
-  if (!target) {
-    toast("没有找到完全同名的人物或势力。", true);
-    return;
-  }
-  const predicate = window.prompt("输入简短关系，例如父亲、效忠、追捕或盟友。");
-  const segmentNumber = Number(window.prompt(`输入原文章节序号，范围 1–${state.overview.segments.length}。`));
-  const segment = state.overview.segments[segmentNumber - 1];
-  const evidenceQuote = window.prompt("粘贴该章节中的逐字连续原文，引文必须能直接证明这条关系。");
-  const summary = window.prompt("用一句陈述写清关系如何成立以及适用条件。");
-  if (!predicate || !segment || !evidenceQuote || !summary) {
-    toast("人工补关系需要对象、关系、章节、逐字引文和说明。", true);
+  const values = await formAction({
+    title: "用原文补充关系",
+    description: "同一条关系保存方向、两端称谓和逐字证据，不会创建第二套人物",
+    submitLabel: "核验并保存关系",
+    fields: [
+      { name: "target_entity_id", label: "关系对象", type: "select", required: true, options: people.map((item) => ({ value: item.id, label: item.name })) },
+      { name: "predicate", label: "正向称谓", placeholder: "例如：父亲、效忠、追捕或盟友", required: true },
+      { name: "directionality", label: "关系方向", type: "select", value: "directed", options: [{ value: "directed", label: "单向关系" }, { value: "bidirectional", label: "双向关系" }] },
+      { name: "reverse_predicate", label: "反向称谓", placeholder: "双向关系必填，例如：子女或徒弟" },
+      { name: "segment_id", label: "原文片段", type: "select", required: true, options: state.overview.segments.map((segment) => ({ value: segment.id, label: segment.chapter_title })) },
+      { name: "evidence_quote", label: "逐字原文", type: "textarea", rows: 4, required: true },
+      { name: "summary", label: "关系说明", type: "textarea", rows: 3, required: true },
+    ],
+  });
+  if (!values) return;
+  const directionality = String(values.directionality);
+  const reversePredicate = String(values.reverse_predicate || "").trim();
+  if (directionality === "bidirectional" && !reversePredicate) {
+    toast("双向关系需要填写反向称谓", true);
     return;
   }
   try {
     await api(`/api/connectivity-reviews/${reviewId}/relation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target_entity_id: target.id, predicate, summary, segment_id: segment.id, evidence_quote: evidenceQuote }),
+      body: JSON.stringify({
+        target_entity_id: Number(values.target_entity_id),
+        predicate: String(values.predicate).trim(),
+        directionality,
+        reverse_predicate: reversePredicate || null,
+        summary: String(values.summary).trim(),
+        segment_id: Number(values.segment_id),
+        evidence_quote: String(values.evidence_quote).trim(),
+      }),
     });
     toast("关系已经建立，并通过逐字原文校验。");
     await loadOverview(Number($("#progress-slider").value), true);
@@ -2999,25 +3841,22 @@ async function createManualConnectivityLink(reviewId, sourceEntityId) {
 
 async function resolveManualEventLocation(eventId) {
   const places = state.overview.entities.filter((item) => item.kind === "place");
-  const locationName = window.prompt(`输入剧情发生地点的完整名称。\n例如：${places.slice(0, 10).map((item) => item.name).join("、")}`);
-  if (!locationName) return;
-  const location = places.find((item) => item.name === locationName.trim());
-  if (!location) {
-    toast("没有找到完全同名的地点。", true);
-    return;
-  }
-  const segmentNumber = Number(window.prompt(`输入原文章节序号，范围 1–${state.overview.segments.length}。`));
-  const segment = state.overview.segments[segmentNumber - 1];
-  const evidenceQuote = window.prompt("粘贴该章节中能够确认地点的逐字连续原文。");
-  if (!segment || !evidenceQuote) {
-    toast("确认地点需要原文章节和逐字引文。", true);
-    return;
-  }
+  const values = await formAction({
+    title: "用原文确认剧情地点",
+    description: "地点只在逐字引文能够直接证明时写入正式地图",
+    submitLabel: "核验并保存地点",
+    fields: [
+      { name: "location_entity_id", label: "发生地点", type: "select", required: true, options: places.map((item) => ({ value: item.id, label: item.name })) },
+      { name: "segment_id", label: "原文片段", type: "select", required: true, options: state.overview.segments.map((segment) => ({ value: segment.id, label: segment.chapter_title })) },
+      { name: "evidence_quote", label: "逐字原文", type: "textarea", rows: 4, required: true },
+    ],
+  });
+  if (!values) return;
   try {
     await api(`/api/event-location-reviews/${eventId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location_entity_id: location.id, segment_id: segment.id, evidence_quote: evidenceQuote }),
+      body: JSON.stringify({ location_entity_id: Number(values.location_entity_id), segment_id: Number(values.segment_id), evidence_quote: String(values.evidence_quote).trim() }),
     });
     toast("剧情地点已经确认，并通过逐字原文校验。");
     await loadOverview(Number($("#progress-slider").value), true);
@@ -3075,7 +3914,7 @@ async function openInspector(type, id) {
     const details = type === "entity"
       ? [["类别", categoryLabels[item.kind] || item.kind], ["别名", aliases], ["首次出现", chapterForSegment(item.first_segment)]]
       : type === "claim"
-        ? [["关系", `${item.source_name} —${item.predicate}→ ${item.target_name}`], ["首次确认", chapterForSegment(item.first_segment)], ["审核状态", item.status], ["置信度", `${Math.round(item.confidence * 100)}%`]]
+        ? [["关系", relationDisplay(item)], ["方向", item.directionality === "bidirectional" ? "双向关系" : "单向关系"], ["首次确认", chapterForSegment(item.first_segment)], ["审核状态", item.status], ["置信度", `${Math.round(item.confidence * 100)}%`]]
         : type === "event"
           ? [["故事时间", item.temporal_value || "未知"], ["原文章节", chapterForSegment(item.first_segment)], ["叙事层级", item.narrative_phase || "unknown"], ["地点", item.location_name || "未说明"], ["交通", transportLabels[item.transport] || "未说明"]]
           : type === "place_relation"
@@ -3093,6 +3932,7 @@ async function openInspector(type, id) {
     });
     const lineagePanel = lineage.length ? `<details class="lineage-panel"><summary>查看这条结果的模型、提示词、成本和版本</summary>${lineage.map((value) => { const manifest = value.manifest; const call = value.model_call; return `<article><strong>${escapeHtml(call?.provider || manifest?.provider || "本地规则")} · ${escapeHtml(call?.model || manifest?.model || "未记录")}</strong><span>运行 #${manifest?.id || "旧记录"} · 调用 #${call?.id || "本地整理"} · ${escapeHtml(call?.status || manifest?.status || value.trace_status)}</span><span>提示词 ${escapeHtml((call?.prompt_hash || manifest?.prompt_hash || "旧版未记录").slice(0, 16))} · 合同 ${escapeHtml(manifest?.contract_version || "旧版未记录")}</span><span>输入 ${Number(call?.input_tokens || 0).toLocaleString()} · 输出 ${Number(call?.output_tokens || 0).toLocaleString()} · ${call?.estimated_cost_usd == null ? "订阅、本地或旧记录不换算美元" : escapeHtml(formatCost(call))}</span></article>`; }).join("")}</details>` : '<p class="lineage-legacy">这是升级前生成或完全由本地规则整理的记录。原文证据仍然有效，但旧版本没有完整运行清单。</p>';
     const review = type === "claim" ? `<div class="review-actions"><button class="button button-quiet review-button" data-status="accepted" type="button">确认关系</button><button class="button button-danger review-button" data-status="rejected" type="button">标记错误</button></div>` : "";
+    const relationEditor = type === "claim" ? `<details class="relation-editor"><summary>修改关系方向</summary><div class="form-stack"><label for="relation-direction">箭头方向</label><select id="relation-direction"><option value="directed" ${item.directionality !== "bidirectional" ? "selected" : ""}>单向</option><option value="bidirectional" ${item.directionality === "bidirectional" ? "selected" : ""}>双向</option></select><label for="relation-reverse-predicate">反向称谓</label><input id="relation-reverse-predicate" maxlength="80" value="${escapeHtml(item.reverse_predicate || "")}" placeholder="例如 子女、徒弟、配偶"><button class="button button-primary save-relation-direction" type="button">保存关系方向</button></div></details>` : "";
     const canRegenerate = ["world_note", "entry"].includes(type);
     const edit = `<div class="record-actions"><button class="button button-quiet edit-record" type="button">人工编辑</button>${canRegenerate ? '<button class="button button-quiet regenerate-record" type="button">按要求二次生成</button>' : ""}</div><div id="record-editor" class="record-editor" hidden><label for="record-summary-input">修正后的说明</label><textarea id="record-summary-input">${escapeHtml(summary)}</textarea><button class="button button-primary save-record-edit" type="button">保存人工版本</button></div>${canRegenerate ? `<div id="draft-editor" class="draft-editor" hidden><label for="draft-instruction">使用陈述句写明整理任务</label><textarea id="draft-instruction" placeholder="补充证据中已经明确的适用条件、限制和后果，删除重复表述。"></textarea><label for="draft-budget">本次草稿金额上限，美元</label><input id="draft-budget" type="number" min="0" step="0.01" value="0.05"><button class="button button-primary create-record-draft" type="button">生成候选版本</button><div id="draft-preview"></div></div>` : ""}`;
     const mapAction = type === "event" && item.location_entity_id ? `<button class="button button-quiet full map-jump" data-location="${item.location_entity_id}" type="button">在地图中查看地点</button>` : "";
@@ -3111,9 +3951,10 @@ async function openInspector(type, id) {
     const nextAction = nextEvent ? `<button class="button button-primary full next-event" data-id="${nextEvent.id}" type="button">下一步：${escapeHtml(nextEvent.title)}</button>` : "";
     const placeEvents = type === "entity" && item.kind === "place" ? state.overview.events.filter((event) => event.location_entity_id === item.id) : [];
     const placeHistory = placeEvents.length ? `<h3 class="evidence-title">此地发生的历史</h3>${placeEvents.map((event) => `<button class="evidence-card place-event" data-id="${event.id}" type="button"><strong>${escapeHtml(event.temporal_value || "时间未知")} · ${escapeHtml(event.title)}</strong><small>${escapeHtml(eventNarrativeText(event))}</small></button>`).join("")}` : "";
-    $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(summary)}</p><div class="detail-list">${detailRows}</div>${edit}${mapAction}${nextAction}${placeHistory}<h3 class="evidence-title">逐字原文证据</h3>${evidenceCards}<h3 class="evidence-title">生成溯源</h3>${lineagePanel}${review}`;
+    $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(summary)}</p><div class="detail-list">${detailRows}</div>${relationEditor}${edit}${mapAction}${nextAction}${placeHistory}<h3 class="evidence-title">逐字原文证据</h3>${evidenceCards}<h3 class="evidence-title">生成溯源</h3>${lineagePanel}${review}`;
     $$(".source-button").forEach((button) => button.addEventListener("click", () => openSource(Number(button.dataset.segment), button.dataset.quote)));
     $$(".review-button").forEach((button) => button.addEventListener("click", () => reviewClaim(id, button.dataset.status)));
+    $(".save-relation-direction")?.addEventListener("click", () => saveRelationDirection(item));
     $(".edit-record")?.addEventListener("click", () => { $("#record-editor").hidden = !$("#record-editor").hidden; });
     $(".save-record-edit")?.addEventListener("click", () => editRecord(type, id, summary));
     $(".regenerate-record")?.addEventListener("click", () => { $("#draft-editor").hidden = !$("#draft-editor").hidden; });
@@ -3215,6 +4056,32 @@ async function reviewClaim(id, status) {
   }
 }
 
+async function saveRelationDirection(item) {
+  const directionality = $("#relation-direction")?.value || "directed";
+  const reversePredicate = $("#relation-reverse-predicate")?.value.trim() || null;
+  if (directionality === "bidirectional" && !reversePredicate) {
+    toast("双向关系需要填写反向称谓", true);
+    return;
+  }
+  try {
+    await api(`/api/claims/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: item.status,
+        directionality,
+        reverse_predicate: reversePredicate,
+        reason: "用户在关系详情中修正方向",
+      }),
+    });
+    closeInspector();
+    await loadOverview(Number($("#progress-slider").value));
+    toast("关系方向已经保存，并记录了修改历史");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 async function openSource(segmentId, quote) {
   try {
     const source = await api(`/api/segments/${segmentId}`);
@@ -3225,7 +4092,7 @@ async function openSource(segmentId, quote) {
     $("#source-text").innerHTML = escapedQuote && escapedText.includes(escapedQuote)
       ? escapedText.replace(escapedQuote, `<mark>${escapedQuote}</mark>`)
       : escapedText;
-    $("#source-dialog").showModal();
+    openDialog("#source-dialog", "#source-close");
   } catch (error) {
     toast(error.message, true);
   }
@@ -3259,22 +4126,73 @@ async function refreshLibraryData() {
 }
 
 function renderLibraryManager() {
-  $("#new-folder-parent").innerHTML = folderOptions();
-  const folders = state.folders.length ? state.folders.map((folder) => `<div class="library-folder-row" data-folder="${folder.id}"><input class="folder-name-edit" value="${escapeHtml(folder.name)}" aria-label="文件夹名称"><select class="folder-parent-edit" aria-label="上级目录">${folderOptions(folder.parent_id, folder.id)}</select><button class="button button-quiet save-folder" type="button">保存</button><button class="button button-danger delete-folder" type="button">删除</button></div>`).join("") : '<p class="merge-complete">还没有文件夹，书籍目前都在根目录。</p>';
-  const books = state.books.length ? state.books.map((book) => `<div class="library-book-row" data-book="${book.id}"><input class="book-title-edit" value="${escapeHtml(book.title)}" aria-label="书名"><input class="book-author-edit" value="${escapeHtml(book.author || "")}" placeholder="作者" aria-label="作者"><select class="book-folder-edit" aria-label="所在文件夹">${folderOptions(book.folder_id)}</select><button class="button button-quiet open-book" type="button">打开</button><button class="button button-quiet save-book" type="button">保存</button><button class="button button-danger delete-book-row" type="button">删除</button></div>`).join("") : '<p class="merge-complete">书库中还没有书籍。</p>';
-  $("#library-manager-body").innerHTML = `<section class="library-manager-section"><h3>文件夹</h3>${folders}</section><section class="library-manager-section"><h3>书籍</h3>${books}</section>`;
-  $$(".save-folder").forEach((button) => button.addEventListener("click", () => saveFolder(button.closest(".library-folder-row"))));
-  $$(".delete-folder").forEach((button) => button.addEventListener("click", () => deleteFolder(button.closest(".library-folder-row"))));
-  $$(".open-book").forEach((button) => button.addEventListener("click", () => openManagedBook(button.closest(".library-book-row"))));
-  $$(".save-book").forEach((button) => button.addEventListener("click", () => saveManagedBook(button.closest(".library-book-row"))));
-  $$(".delete-book-row").forEach((button) => button.addEventListener("click", () => deleteManagedBook(button.closest(".library-book-row"))));
+  const panel = $("#view-panel");
+  if (!panel) return;
+  const children = new Map();
+  state.folders.forEach((folder) => {
+    const key = folder.parent_id === null ? "root" : String(folder.parent_id);
+    if (!children.has(key)) children.set(key, []);
+    children.get(key).push(folder);
+  });
+  const folderTree = (parent = "root", depth = 0, trail = new Set()) => (children.get(String(parent)) || []).map((folder) => {
+    if (trail.has(Number(folder.id))) return "";
+    const nextTrail = new Set(trail).add(Number(folder.id));
+    const count = state.books.filter((book) => Number(book.folder_id) === Number(folder.id)).length;
+    const editing = Number(state.libraryEditingFolderId) === Number(folder.id);
+    return `<div class="library-folder-node" style="--folder-depth:${depth}" data-folder="${folder.id}"><div class="library-folder-line"><button class="library-folder-select${String(state.libraryFolderId) === String(folder.id) ? " active" : ""}" type="button"><span>▸</span><strong>${escapeHtml(folder.name)}</strong><small>${count}</small></button><button class="library-inline-action edit-folder" type="button" aria-label="编辑 ${escapeHtml(folder.name)}">编辑</button><button class="library-inline-action delete-folder" type="button" aria-label="删除 ${escapeHtml(folder.name)}">删除</button></div>${editing ? `<div class="library-folder-editor"><input class="folder-name-edit" value="${escapeHtml(folder.name)}" aria-label="文件夹名称"><select class="folder-parent-edit" aria-label="上级目录">${folderOptions(folder.parent_id, folder.id)}</select><div><button class="button button-primary save-folder" type="button">保存</button><button class="button button-quiet cancel-folder-edit" type="button">取消</button></div></div>` : ""}${folderTree(folder.id, depth + 1, nextTrail)}</div>`;
+  }).join("");
+  const query = state.libraryQuery.trim().toLocaleLowerCase();
+  const filteredBooks = state.books.filter((book) => {
+    const folderMatch = state.libraryFolderId === "all"
+      || (state.libraryFolderId === "root" ? book.folder_id === null : Number(book.folder_id) === Number(state.libraryFolderId));
+    const queryMatch = !query || `${book.title} ${book.author || ""}`.toLocaleLowerCase().includes(query);
+    return folderMatch && queryMatch;
+  });
+  if (!filteredBooks.some((book) => Number(book.id) === Number(state.libraryBookId))) {
+    state.libraryBookId = filteredBooks[0]?.id || null;
+  }
+  const bookCards = filteredBooks.map((book) => `<button class="library-book-card${Number(book.id) === Number(state.libraryBookId) ? " active" : ""}" data-book="${book.id}" type="button"><span class="library-book-mark" aria-hidden="true">书</span><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author || "作者未填写")} · ${Number(book.segment_count || 0)} 个原文片段 · ${Number(book.character_count || 0).toLocaleString()} 字</small></span></button>`).join("");
+  const selectedBook = state.books.find((book) => Number(book.id) === Number(state.libraryBookId));
+  const selectedFolder = selectedBook?.folder_id === null ? "根目录" : state.folders.find((folder) => Number(folder.id) === Number(selectedBook?.folder_id))?.name || "待归类";
+  const editingBook = selectedBook && Number(state.libraryEditingBookId) === Number(selectedBook.id);
+  const bookDetail = selectedBook ? `<div class="library-book-detail" data-book="${selectedBook.id}"><span class="eyebrow">书籍详情</span><h3>${escapeHtml(selectedBook.title)}</h3>${editingBook ? `<div class="library-book-editor form-stack"><label for="library-book-title">书名</label><input id="library-book-title" class="book-title-edit" value="${escapeHtml(selectedBook.title)}"><label for="library-book-author">作者</label><input id="library-book-author" class="book-author-edit" value="${escapeHtml(selectedBook.author || "")}"><label for="library-book-folder">所在文件夹</label><select id="library-book-folder" class="book-folder-edit">${folderOptions(selectedBook.folder_id)}</select><div class="action-bar"><button class="button button-primary save-book" type="button">保存修改</button><button class="button button-quiet cancel-book-edit" type="button">取消</button></div></div>` : `<dl><div><dt>作者</dt><dd>${escapeHtml(selectedBook.author || "未填写")}</dd></div><div><dt>分类</dt><dd>${escapeHtml(selectedFolder)}</dd></div><div><dt>原文片段</dt><dd>${Number(selectedBook.segment_count || 0)}</dd></div><div><dt>全文字符</dt><dd>${Number(selectedBook.character_count || 0).toLocaleString()}</dd></div><div><dt>更新时间</dt><dd>${escapeHtml(selectedBook.updated_at || "未记录")}</dd></div></dl><div class="library-detail-actions"><button class="button button-primary open-book" type="button">打开这本书</button><button class="button button-quiet edit-book" type="button">编辑资料</button><button class="button button-danger delete-book-row" type="button">删除书籍</button></div>`}</div>` : emptyState("没有符合条件的书籍", "更换文件夹或清除搜索条件后再查看");
+  const folderTreeHtml = folderTree();
+  panel.innerHTML = `${panelHead("本机书库", "整理文件夹、书籍资料和分析入口，离开后会恢复原来的阅读视图", `<button id="library-back" class="button button-quiet" type="button">返回阅读</button>`)}<div class="library-workspace"><aside class="library-folder-pane"><div class="library-pane-head"><strong>文件夹</strong><button id="show-folder-create" class="library-inline-action" type="button">新建</button></div><button class="library-folder-select${state.libraryFolderId === "all" ? " active" : ""}" data-folder="all" type="button"><span>◇</span><strong>全部书籍</strong><small>${state.books.length}</small></button><button class="library-folder-select${state.libraryFolderId === "root" ? " active" : ""}" data-folder="root" type="button"><span>⌂</span><strong>根目录</strong><small>${state.books.filter((book) => book.folder_id === null).length}</small></button>${folderTreeHtml || '<p class="library-empty-copy">还没有文件夹</p>'}<div id="library-folder-create" class="library-folder-create form-stack" hidden><label for="new-folder-name">文件夹名称</label><input id="new-folder-name" maxlength="120"><label for="new-folder-parent">上级目录</label><select id="new-folder-parent">${folderOptions()}</select><button id="create-folder-button" class="button button-primary" type="button">创建文件夹</button></div></aside><section class="library-books-pane"><div class="library-searchbar"><input id="library-search" type="search" value="${escapeHtml(state.libraryQuery)}" placeholder="搜索书名或作者"><span>${filteredBooks.length} 本</span></div><div class="library-book-list">${bookCards || emptyState("没有符合条件的书籍", "可以调整文件夹或搜索条件")}</div></section><aside class="library-detail-pane">${bookDetail}</aside></div>`;
+  $("#library-back")?.addEventListener("click", () => {
+    state.view = state.viewBeforeLibrary || "relationships";
+    renderView();
+  });
+  $("#show-folder-create")?.addEventListener("click", () => { $("#library-folder-create").hidden = !$("#library-folder-create").hidden; });
+  $("#create-folder-button")?.addEventListener("click", createFolder);
+  $("#library-search")?.addEventListener("input", (event) => {
+    state.libraryQuery = event.target.value;
+    renderLibraryManager();
+    $("#library-search")?.focus();
+  });
+  $$(".library-folder-select").forEach((button) => button.addEventListener("click", () => {
+    state.libraryFolderId = button.dataset.folder || button.closest("[data-folder]")?.dataset.folder || "all";
+    state.libraryBookId = null;
+    renderLibraryManager();
+  }));
+  $$(".library-book-card").forEach((button) => button.addEventListener("click", () => { state.libraryBookId = Number(button.dataset.book); state.libraryEditingBookId = null; renderLibraryManager(); }));
+  $$(".edit-folder").forEach((button) => button.addEventListener("click", () => { state.libraryEditingFolderId = Number(button.closest("[data-folder]").dataset.folder); renderLibraryManager(); }));
+  $$(".cancel-folder-edit").forEach((button) => button.addEventListener("click", () => { state.libraryEditingFolderId = null; renderLibraryManager(); }));
+  $$(".save-folder").forEach((button) => button.addEventListener("click", () => saveFolder(button.closest("[data-folder]"))));
+  $$(".delete-folder").forEach((button) => button.addEventListener("click", () => deleteFolder(button.closest("[data-folder]"))));
+  $(".open-book")?.addEventListener("click", () => openManagedBook($(".library-book-detail")));
+  $(".edit-book")?.addEventListener("click", () => { state.libraryEditingBookId = Number(state.libraryBookId); renderLibraryManager(); });
+  $(".cancel-book-edit")?.addEventListener("click", () => { state.libraryEditingBookId = null; renderLibraryManager(); });
+  $(".save-book")?.addEventListener("click", () => saveManagedBook($(".library-book-detail")));
+  $(".delete-book-row")?.addEventListener("click", () => deleteManagedBook($(".library-book-detail")));
 }
 
 async function openLibraryManager() {
   try {
     await refreshLibraryData();
-    renderLibraryManager();
-    $("#library-dialog").showModal();
+    if (state.view !== "library") state.viewBeforeLibrary = state.view;
+    state.view = "library";
+    state.libraryBookId = state.bookId;
+    renderView();
   } catch (error) {
     toast(error.message, true);
   }
@@ -3304,6 +4222,7 @@ async function saveFolder(row) {
       body: JSON.stringify({ name: row.querySelector(".folder-name-edit").value.trim(), parent_id: parentValue === "root" ? null : Number(parentValue) }),
     });
     await refreshLibraryData();
+    state.libraryEditingFolderId = null;
     renderLibraryManager();
     toast("文件夹已经保存。");
   } catch (error) { toast(error.message, true); }
@@ -3311,7 +4230,7 @@ async function saveFolder(row) {
 
 async function deleteFolder(row) {
   const id = Number(row.dataset.folder);
-  if (!window.confirm("删除这个文件夹吗？其中的书籍和子文件夹会移回根目录。")) return;
+  if (!await confirmAction("删除文件夹", "其中的书籍和子文件夹会移回根目录，不会删除书籍内容", "删除文件夹")) return;
   try {
     await api(`/api/library/folders/${id}`, { method: "DELETE" });
     await refreshLibraryData();
@@ -3323,7 +4242,7 @@ async function openManagedBook(row) {
   state.bookId = Number(row.dataset.book);
   resetMapStateForBook();
   $("#book-select").value = String(state.bookId);
-  $("#library-dialog").close();
+  state.view = state.viewBeforeLibrary || "relationships";
   await loadOverview();
 }
 
@@ -3341,6 +4260,7 @@ async function saveManagedBook(row) {
       }),
     });
     await refreshLibraryData();
+    state.libraryEditingBookId = null;
     renderLibraryManager();
     if (Number(state.bookId) === id) await loadOverview(null, true);
     toast("书籍信息已经保存。");
@@ -3350,7 +4270,7 @@ async function saveManagedBook(row) {
 async function deleteManagedBook(row) {
   const id = Number(row.dataset.book);
   const book = state.books.find((item) => Number(item.id) === id);
-  if (!window.confirm(`确定删除《${book?.title || "这本书"}》及其分析结果吗？`)) return;
+  if (!await confirmAction("删除书籍", `《${book?.title || "这本书"}》的原文、分析结果和修改记录将被删除`, "删除书籍")) return;
   try {
     await api(`/api/books/${id}`, { method: "DELETE" });
     if (Number(state.bookId) === id) state.bookId = null;
@@ -3395,7 +4315,7 @@ async function openUpdateDialog() {
   if (!state.bookId) return;
   $("#book-update-file").value = "";
   $("#update-result").innerHTML = "";
-  $("#update-dialog").showModal();
+  openDialog("#update-dialog", "#book-update-file");
   await loadUpdateHistory();
 }
 
@@ -3410,7 +4330,7 @@ function renderUpdateResult(result) {
   }
   $$(".resolve-update").forEach((button) => button.addEventListener("click", () => resolveUpdate(Number(button.dataset.id), button.dataset.action)));
   $(".analyze-added")?.addEventListener("click", (event) => {
-    $("#update-dialog").close();
+    closeDialog("#update-dialog");
     analyze(Number(event.currentTarget.dataset.start));
   });
 }
@@ -3453,7 +4373,7 @@ async function resolveUpdate(updateId, action) {
       state.mapStep = 0;
       state.mapViewport = null;
       await loadOverview();
-      $("#update-dialog").close();
+      closeDialog("#update-dialog");
       toast("冲突版已经另存，当前版本完整保留。");
     } else {
       $("#update-result").innerHTML = '<div class="update-summary">本次更新已结束，当前版本和既有分析保持不变。</div>';
@@ -3478,7 +4398,7 @@ async function analyze(startSegment = 0) {
   $("#analysis-review-mode").hidden = false;
   document.querySelector('label[for="analysis-review-mode"]')?.removeAttribute("hidden");
   $("#analysis-start").textContent = "启动自动分析";
-  $("#analysis-dialog").showModal();
+  openDialog("#analysis-dialog", "#analysis-budget");
   await refreshAnalysisEstimate();
 }
 
@@ -3486,7 +4406,7 @@ async function refreshAnalysisEstimate() {
   const provider = $("#provider-select").value;
   const reviewMode = $("#analysis-review-mode").value;
   const estimateBox = $("#analysis-estimate");
-  estimateBox.textContent = "正在计算保守预估…";
+  estimateBox.textContent = "正在渲染实际请求并结合历史账本预测…";
   $("#analysis-start").disabled = true;
   try {
     const estimate = await api(`/api/books/${state.bookId}/jobs/estimate`, {
@@ -3507,12 +4427,16 @@ function renderAnalysisEstimate() {
   const estimate = state.analysisEstimate;
   if (!estimate) return;
   const budget = Math.max(0, Number($("#analysis-budget").value || 0));
-  const amount = estimate.estimated_cost_usd;
+  const amount = estimate.conservative_cost_usd ?? estimate.estimated_cost_usd;
+  const medianAmount = estimate.median_cost_usd;
   const over = amount !== null && Number(amount) > budget;
   const estimateBox = $("#analysis-estimate");
   const amountLabel = amount === null ? "当前价格不可复算" : `$${Number(amount).toFixed(Number(amount) < 0.01 ? 6 : 4)}`;
+  const medianLabel = medianAmount === null || medianAmount === undefined ? "样本不足" : `$${Number(medianAmount).toFixed(Number(medianAmount) < 0.01 ? 6 : 4)}`;
+  const confidenceLabel = ({ high: "高", medium: "中", low: "低" })[estimate.confidence] || "待校准";
   estimateBox.classList.toggle("over", false);
-  estimateBox.innerHTML = `<strong>保守预估 ${escapeHtml(amountLabel)}</strong><br>${Number(estimate.segment_count).toLocaleString()} 个片段 · 输入最多约 ${Number(estimate.estimated_input_tokens).toLocaleString()} · 输出最多约 ${Number(estimate.estimated_output_tokens).toLocaleString()} 令牌<br>${over ? `初始参考为 $${budget.toFixed(2)}，任务会自动扩展到覆盖实际分析所需的范围。` : "系统会根据真实用量继续校准，不会因保守预估提前停止。"}`;
+  const backtest = estimate.backtest;
+  estimateBox.innerHTML = `<div class="forecast-grid"><span>预计中位值<strong>${escapeHtml(medianLabel)}</strong></span><span>保守上限<strong>${escapeHtml(amountLabel)}</strong></span><span>待调用片段<strong>${Number(estimate.pending_segments ?? estimate.segment_count).toLocaleString()}</strong></span><span>本地缓存<strong>${Number(estimate.exact_cache_segments || 0).toLocaleString()}</strong></span></div><p>置信度 ${escapeHtml(confidenceLabel)} · ${Number(estimate.sample_count || 0)} 条真实调用样本 · 输入中位约 ${Number(estimate.median_input_tokens || 0).toLocaleString()} · 输出中位约 ${Number(estimate.median_output_tokens || 0).toLocaleString()} 令牌${backtest ? ` · 10/${Number(backtest.validation_segments)} 回放误差 ${escapeHtml(backtest.absolute_error_percent ?? "无法计价")}%` : ""}</p><small>${over ? `初始参考为 $${budget.toFixed(2)}，硬预算不会被预测值悄悄改写，自动扩展会留下原因和记录` : "前三个未缓存片段完成后会用真实密度校准剩余预测，保守上限用于防止失控调用"}</small>`;
   $("#analysis-start").disabled = false;
 }
 
@@ -3534,7 +4458,7 @@ async function startAnalysis() {
           budget_mode: "adaptive",
         }),
       });
-      $("#analysis-dialog").close();
+      closeDialog("#analysis-dialog");
       renderJob(updated);
       toast("自动适配范围已保存，点击继续即可恢复任务。")
     } catch (error) {
@@ -3565,7 +4489,7 @@ async function startAnalysis() {
         review_mode: reviewMode,
       }),
     });
-    $("#analysis-dialog").close();
+    closeDialog("#analysis-dialog");
     state.activeJobId = job.id;
     renderJob(job);
     if (job.status === "completed" && Number(job.total_segments) === 0) {
@@ -3588,13 +4512,13 @@ async function searchBook() {
   state.searchQuery = query;
   $("#search-title").textContent = `“${query}”的搜索结果`;
   $("#search-results").innerHTML = '<div class="loading">正在搜索全书…</div>';
-  $("#search-dialog").showModal();
+  openDialog("#search-dialog", "#search-close");
   try {
     const visible = Number($("#progress-slider").value);
     const results = await api(`/api/books/${state.bookId}/search?q=${encodeURIComponent(query)}&through_segment=${visible}`);
     $("#search-results").innerHTML = results.length ? results.map((result) => `<button class="search-result" data-type="${escapeHtml(result.target_type)}" data-id="${result.target_id}" type="button"><strong>${escapeHtml(result.title)}</strong><span>${escapeHtml(result.snippet)}</span></button>`).join("") : emptyState("没有找到匹配内容", "可以更换人物别名、地点或原文词句。");
     $$(".search-result").forEach((button) => button.addEventListener("click", () => {
-      $("#search-dialog").close();
+      closeDialog("#search-dialog");
       if (button.dataset.type === "segment") {
         openSource(Number(button.dataset.id), state.searchQuery);
       } else {
@@ -3617,7 +4541,7 @@ function download(path) {
 
 async function deleteCurrentBook() {
   const title = state.overview.book.title;
-  if (!window.confirm(`确定删除《${title}》吗？这会删除原文、分析结果和修改记录。建议先备份。`)) return;
+  if (!await confirmAction("删除当前书籍", `《${title}》的原文、分析结果和修改记录将被删除，建议先备份`, "删除书籍")) return;
   try {
     await api(`/api/books/${state.bookId}`, { method: "DELETE" });
     await refreshLibraryData();
@@ -3653,7 +4577,7 @@ async function saveProviderKey() {
     $("#provider-key").value = "";
     state.providers = await api("/api/providers");
     renderProviderOptions();
-    $("#key-dialog").close();
+    closeDialog("#key-dialog");
     toast("模型密钥已由 Windows 当前账户加密保存。");
   } catch (error) {
     toast(error.message, true);
@@ -3662,12 +4586,12 @@ async function saveProviderKey() {
 
 async function deleteProviderKey() {
   const provider = $("#key-provider").value;
-  if (!window.confirm("确定删除这个平台保存在本机的密钥吗？")) return;
+  if (!await confirmAction("删除模型密钥", "这个平台保存在本机的密钥将被删除", "删除密钥")) return;
   try {
     await api(`/api/settings/provider-key/${provider}`, { method: "DELETE" });
     state.providers = await api("/api/providers");
     renderProviderOptions();
-    $("#key-dialog").close();
+    closeDialog("#key-dialog");
     toast("本机保存的模型密钥已经删除。");
   } catch (error) {
     toast(error.message, true);
@@ -3688,19 +4612,17 @@ $("#book-select").addEventListener("change", async (event) => {
 $("#upload-button").addEventListener("click", () => $("#file-input").click());
 $("#file-input").addEventListener("change", (event) => importFile(event.target.files[0]));
 $("#library-button").addEventListener("click", openLibraryManager);
-$("#library-close").addEventListener("click", () => $("#library-dialog").close());
-$("#create-folder-button").addEventListener("click", createFolder);
 $("#update-book-button").addEventListener("click", openUpdateDialog);
-$("#update-close").addEventListener("click", () => $("#update-dialog").close());
+$("#update-close").addEventListener("click", () => closeDialog("#update-dialog"));
 $("#preview-update-button").addEventListener("click", submitBookUpdate);
 $("#analyze-button").addEventListener("click", () => analyze(0));
-$("#analysis-close").addEventListener("click", () => $("#analysis-dialog").close());
+$("#analysis-close").addEventListener("click", () => closeDialog("#analysis-dialog"));
 $("#analysis-reestimate").addEventListener("click", refreshAnalysisEstimate);
 $("#analysis-start").addEventListener("click", startAnalysis);
 $("#analysis-budget").addEventListener("input", renderAnalysisEstimate);
 $("#analysis-review-mode").addEventListener("change", refreshAnalysisEstimate);
-$("#key-settings-button").addEventListener("click", () => $("#key-dialog").showModal());
-$("#key-close").addEventListener("click", () => $("#key-dialog").close());
+$("#key-settings-button").addEventListener("click", () => openDialog("#key-dialog", "#key-provider"));
+$("#key-close").addEventListener("click", () => closeDialog("#key-dialog"));
 $("#key-save").addEventListener("click", saveProviderKey);
 $("#key-delete").addEventListener("click", deleteProviderKey);
 $("#global-search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchBook(); });
@@ -3708,16 +4630,57 @@ $("#global-search-button").addEventListener("click", searchBook);
 $("#export-button").addEventListener("click", () => download(`/api/books/${state.bookId}/export?include_text=true`));
 $("#backup-button").addEventListener("click", () => download("/api/backup"));
 $("#delete-button").addEventListener("click", deleteCurrentBook);
+$("#progress-slider").addEventListener("input", (event) => {
+  const value = Number(event.target.value);
+  $("#progress-count").textContent = `${value + 1}/${state.overview?.segments?.length || 0}`;
+  $("#progress-chapter").textContent = "松开后显示对应进度";
+});
 $("#progress-slider").addEventListener("change", (event) => loadOverview(Number(event.target.value)));
+$("#progress-count").addEventListener("dblclick", beginProgressEdit);
+$("#progress-edit").addEventListener("click", beginProgressEdit);
 $$(".nav-item").forEach((item) => item.addEventListener("click", () => { state.view = item.dataset.view; renderView(); }));
 $("#inspector-close").addEventListener("click", closeInspector);
 $("#scrim").addEventListener("click", closeInspector);
-$("#source-close").addEventListener("click", () => $("#source-dialog").close());
-$("#search-close").addEventListener("click", () => $("#search-dialog").close());
+$("#source-close").addEventListener("click", () => closeDialog("#source-dialog"));
+$("#search-close").addEventListener("click", () => closeDialog("#search-dialog"));
+$("#confirm-close").addEventListener("click", () => finishConfirmation(false));
+$("#confirm-cancel").addEventListener("click", () => finishConfirmation(false));
+$("#confirm-accept").addEventListener("click", () => finishConfirmation(true));
+$("#confirm-dialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  finishConfirmation(false);
+});
+$("#form-dialog-close").addEventListener("click", () => finishFormAction(false));
+$("#form-dialog-cancel").addEventListener("click", () => finishFormAction(false));
+$("#form-dialog-submit").addEventListener("click", () => finishFormAction(true));
+$("#form-dialog-fields").addEventListener("submit", (event) => {
+  event.preventDefault();
+  finishFormAction(true);
+});
+$("#form-dialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  finishFormAction(false);
+});
+$$('dialog').forEach((dialog) => dialog.addEventListener("close", () => {
+  const trigger = state.dialogReturnFocus.get(dialog.id);
+  state.dialogReturnFocus.delete(dialog.id);
+  if (trigger?.isConnected) trigger.focus();
+}));
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeInspector(); });
 window.addEventListener("resize", () => {
   if (!$("#inspector").classList.contains("open")) return;
   $("#scrim").hidden = !window.matchMedia("(max-width: 1100px)").matches;
 });
+
+const selectObserver = new MutationObserver((records) => {
+  if (state.selectEnhanceFrame) return;
+  if (!records.some((record) => [...record.addedNodes].some((node) => node.nodeType === Node.ELEMENT_NODE))) return;
+  state.selectEnhanceFrame = requestAnimationFrame(() => {
+    state.selectEnhanceFrame = null;
+    enhanceSelects();
+  });
+});
+selectObserver.observe(document.body, { childList: true, subtree: true });
+enhanceSelects();
 
 initialize();

@@ -129,6 +129,12 @@ def strip_gutenberg_wrapper(text: str) -> str:
         return text
     body = text[start.end() : end.start()].strip()
 
+    # Older Gutenberg exports may add a legacy English end line immediately before
+    # the modern starred marker. It is licensing wrapper text, not novel evidence.
+    legacy_end = re.search(r"(?im)^\s*End of Project Gutenberg(?:'s)?[^\n]*\s*$", body)
+    if legacy_end is not None and legacy_end.start() >= max(0, len(body) - 1_000):
+        body = body[: legacy_end.start()].rstrip()
+
     # 一些 Gutenberg 文本会在正文标记之后再次写入制作者署名；只在首章前的短前缀中清除它。
     first_chapter = CHAPTER_PATTERN.search(body)
     if first_chapter is not None and first_chapter.start() < 1_000:

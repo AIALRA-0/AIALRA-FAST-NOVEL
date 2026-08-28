@@ -25,11 +25,14 @@ class EntityCandidate(StrictModel):
 
 
 class RelationCandidate(StrictModel):
-    """人物或势力之间的有向关系。"""
+    """人物或势力之间由逐字证据支持的关系。"""
 
     source: str = Field(min_length=1, max_length=120)
     target: str = Field(min_length=1, max_length=120)
     predicate: str = Field(min_length=1, max_length=80)
+    directionality: Literal["directed", "bidirectional"] = "directed"
+    reverse_predicate: str | None = Field(default=None, min_length=1, max_length=80)
+    temporal_scope: Literal["current", "historical", "conditional", "unknown"] = "current"
     summary: str = Field(min_length=1, max_length=600)
     confidence: float = Field(ge=0, le=1)
     evidence_quote: str = Field(min_length=1, max_length=800)
@@ -161,6 +164,8 @@ class ClaimPatch(BaseModel):
 
     status: Literal["unreviewed", "accepted", "rejected", "corrected"]
     summary: str | None = Field(default=None, min_length=1, max_length=800)
+    directionality: Literal["directed", "bidirectional"] | None = None
+    reverse_predicate: str | None = Field(default=None, max_length=80)
     reason: str = Field(default="", max_length=500)
 
 
@@ -292,6 +297,104 @@ class KnowledgeClaimPatch(BaseModel):
     qualifiers: dict[str, Any] | None = None
 
 
+class SystemCreate(BaseModel):
+    """Create one evidence-bounded order, hierarchy, partial order, or network."""
+
+    name: str = Field(min_length=1, max_length=160)
+    category: Literal["ability", "organization", "social", "item", "lineage", "other"]
+    structure_type: Literal["ordered", "hierarchical", "partial_order", "network"]
+    description: str = Field(default="", max_length=5_000)
+
+
+class SystemPatch(BaseModel):
+    """Edit or archive a system without deleting its evidence history."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    category: Literal["ability", "organization", "social", "item", "lineage", "other"] | None = None
+    structure_type: Literal["ordered", "hierarchical", "partial_order", "network"] | None = None
+    description: str | None = Field(default=None, max_length=5_000)
+    status: Literal["active", "archived", "needs_resolution"] | None = None
+
+
+class SystemNodeCreate(BaseModel):
+    """Add one system node with an optional literal source quote."""
+
+    label: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=5_000)
+    rank_value: float | None = None
+    concept_id: int | None = Field(default=None, gt=0)
+    effective_from_segment: int = Field(default=0, ge=0)
+    effective_to_segment: int | None = Field(default=None, ge=0)
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    segment_id: int | None = Field(default=None, gt=0)
+    evidence_quote: str = Field(default="", max_length=800)
+
+
+class SystemRelationCreate(BaseModel):
+    """Connect two nodes only when a supported relation is known."""
+
+    source_node_id: int = Field(gt=0)
+    target_node_id: int = Field(gt=0)
+    relation_type: Literal["higher_than", "contains", "reports_to", "precedes", "related"]
+    confidence: float = Field(default=1.0, ge=0, le=1)
+    segment_id: int | None = Field(default=None, gt=0)
+    evidence_quote: str = Field(default="", max_length=800)
+
+
+class SystemNodePatch(BaseModel):
+    """Edit or archive one hierarchy node without erasing its evidence."""
+
+    label: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=5_000)
+    rank_value: float | None = None
+    clear_rank: bool = False
+    effective_from_segment: int | None = Field(default=None, ge=0)
+    effective_to_segment: int | None = Field(default=None, ge=0)
+    status: Literal["accepted", "parallel", "needs_resolution", "deprecated"] | None = None
+
+
+class SystemRelationPatch(BaseModel):
+    """Edit a supported edge or archive it while retaining the source evidence."""
+
+    relation_type: Literal["higher_than", "contains", "reports_to", "precedes", "related"] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    status: Literal["accepted", "parallel", "needs_resolution", "deprecated"] | None = None
+
+
+class UiIssueCreate(BaseModel):
+    """Record one reproducible interface defect and its release acceptance rule."""
+
+    page_key: str = Field(min_length=1, max_length=120)
+    viewport: str = Field(default="", max_length=120)
+    severity: Literal["low", "medium", "high", "blocker"]
+    summary: str = Field(min_length=2, max_length=500)
+    reproduction: str = Field(default="", max_length=5_000)
+    acceptance: str = Field(default="", max_length=5_000)
+    screenshot_path: str = Field(default="", max_length=1_000)
+    regression_test: str = Field(default="", max_length=1_000)
+
+
+class UiIssuePatch(BaseModel):
+    """Update an interface issue after evidence or regression status changes."""
+
+    severity: Literal["low", "medium", "high", "blocker"] | None = None
+    summary: str | None = Field(default=None, min_length=2, max_length=500)
+    reproduction: str | None = Field(default=None, max_length=5_000)
+    acceptance: str | None = Field(default=None, max_length=5_000)
+    screenshot_path: str | None = Field(default=None, max_length=1_000)
+    regression_test: str | None = Field(default=None, max_length=1_000)
+    status: Literal["open", "fixed", "verified", "wont_fix"] | None = None
+
+
+class KnowledgeCompleteRequest(BaseModel):
+    """Queue or build a narrowly scoped knowledge supplement from selected chapters."""
+
+    concept_id: int | None = Field(default=None, gt=0)
+    instruction: str = Field(min_length=4, max_length=1_000)
+    segment_ids: list[int] = Field(default_factory=list, max_length=40)
+    provider: Literal["mock", "deepseek", "moonshot", "codex_luna", "auto"] = "auto"
+
+
 class ConnectivityReviewPatch(BaseModel):
     """人工解决自动复审仍无法裁定的孤立节点。"""
 
@@ -304,6 +407,8 @@ class ConnectivityLinkCreate(BaseModel):
 
     target_entity_id: int = Field(gt=0)
     predicate: str = Field(min_length=1, max_length=80)
+    directionality: Literal["directed", "bidirectional"] = "directed"
+    reverse_predicate: str | None = Field(default=None, min_length=1, max_length=80)
     summary: str = Field(min_length=2, max_length=600)
     segment_id: int = Field(gt=0)
     evidence_quote: str = Field(min_length=1, max_length=800)
@@ -544,6 +649,8 @@ class ConnectivityRelationCandidate(StrictModel):
     source: str = Field(min_length=1, max_length=120)
     target: str = Field(min_length=1, max_length=120)
     predicate: str = Field(min_length=1, max_length=40)
+    directionality: Literal["directed", "bidirectional"] = "directed"
+    reverse_predicate: str | None = Field(default=None, min_length=1, max_length=80)
     summary: str = Field(min_length=1, max_length=220)
     confidence: float = Field(ge=0, le=1)
     segment_id: int = Field(gt=0)

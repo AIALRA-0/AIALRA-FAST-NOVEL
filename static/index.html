@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="带原文证据的小说人物、时间、地点与世界知识系统">
   <title>小说证据图谱</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23174f43'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' fill='white'%3E%E5%8F%99%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/styles.css?v=2.7.0">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111111'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' fill='white'%3E%E5%8F%99%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css?v=2.9.0-rc.1">
 </head>
 <body>
   <!-- 跳转链接帮助键盘用户直接进入主要内容。 -->
@@ -18,7 +18,7 @@
         <div class="brand-mark" aria-hidden="true">叙</div>
         <div>
           <strong>小说证据图谱</strong>
-          <span>Novel Atlas · 2.7.0</span>
+          <span>Novel Atlas · 2.9.0-rc.1 候选版</span>
         </div>
       </div>
 
@@ -42,13 +42,14 @@
         <button class="nav-item" data-view="map" type="button"><span aria-hidden="true">⌁</span>逻辑地图</button>
         <button class="nav-item" data-view="world" type="button"><span aria-hidden="true">◇</span>世界信息</button>
         <button class="nav-item" data-view="database" type="button"><span aria-hidden="true">▦</span>条目数据库</button>
+        <button class="nav-item" id="systems-nav" data-view="systems" type="button" hidden><span aria-hidden="true">階</span>体系图谱</button>
         <button class="nav-item" data-view="quality" type="button"><span aria-hidden="true">✓</span>质量检查</button>
         <button class="nav-item" data-view="collaboration" type="button"><span aria-hidden="true">≋</span>协作控制</button>
       </nav>
 
       <section class="progress-control" aria-labelledby="progress-title">
         <div class="section-label" id="progress-title">防剧透进度</div>
-        <div class="progress-copy"><strong id="progress-chapter">—</strong><span id="progress-count">—</span></div>
+        <div class="progress-copy"><strong id="progress-chapter">—</strong><span id="progress-count" title="双击输入进度">—</span><button id="progress-edit" class="progress-edit" type="button">编辑进度</button></div>
         <input id="progress-slider" type="range" min="0" max="0" value="0" aria-label="只显示读到当前章节之前的信息">
         <p>人物、关系、地点和条目会使用同一个阅读边界。</p>
       </section>
@@ -146,17 +147,6 @@
     </div>
   </dialog>
 
-  <!-- 书库管理在一个页面完成文件夹和书籍的增删改查。 -->
-  <dialog id="library-dialog" class="source-dialog library-dialog">
-    <div class="dialog-head"><div><span class="eyebrow">本机书库</span><h2>管理文件夹与书籍</h2></div><button class="icon-button" id="library-close" type="button" aria-label="关闭书库管理">×</button></div>
-    <div class="library-create-row">
-      <input id="new-folder-name" type="text" maxlength="120" placeholder="新文件夹名称" aria-label="新文件夹名称">
-      <select id="new-folder-parent" aria-label="新文件夹的上级目录"></select>
-      <button id="create-folder-button" class="button button-primary" type="button">新建文件夹</button>
-    </div>
-    <div id="library-manager-body" class="library-manager-body"></div>
-  </dialog>
-
   <!-- 增量更新先比较旧章节，安全追加自动完成，变化内容进入冲突清单。 -->
   <dialog id="update-dialog" class="source-dialog update-dialog">
     <div class="dialog-head"><div><span class="eyebrow">保留旧分析</span><h2>增量更新当前书籍</h2></div><button class="icon-button" id="update-close" type="button" aria-label="关闭增量更新">×</button></div>
@@ -171,12 +161,24 @@
     </div>
   </dialog>
 
+  <dialog id="confirm-dialog" class="source-dialog confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="dialog-head"><div><span class="eyebrow">请确认操作</span><h2 id="confirm-title">确认操作</h2></div><button class="icon-button" id="confirm-close" type="button" aria-label="关闭确认窗口">×</button></div>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div class="dialog-actions"><button id="confirm-cancel" class="button button-quiet" type="button">取消</button><button id="confirm-accept" class="button button-danger" type="button">确认</button></div>
+  </dialog>
+
+  <dialog id="form-dialog" class="source-dialog form-dialog" aria-labelledby="form-dialog-title">
+    <div class="dialog-head"><div><span class="eyebrow">人工核对</span><h2 id="form-dialog-title">补充信息</h2><p id="form-dialog-description"></p></div><button class="icon-button" id="form-dialog-close" type="button" aria-label="关闭填写窗口">×</button></div>
+    <form id="form-dialog-fields" class="form-stack" novalidate></form>
+    <div class="dialog-actions"><button id="form-dialog-cancel" class="button button-quiet" type="button">取消</button><button id="form-dialog-submit" class="button button-primary" type="button">保存</button></div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/vendor/3d-force-graph-1.80.0.min.js" defer></script>
   <script src="/static/vendor/cytoscape-3.33.1.min.js" defer></script>
   <script src="/static/vendor/layout-base-2.0.1.js" defer></script>
   <script src="/static/vendor/cose-base-2.2.0.js" defer></script>
   <script src="/static/vendor/cytoscape-fcose-2.2.0.js" defer></script>
-  <script src="/static/app.js?v=2.7.0" defer></script>
+  <script src="/static/app.js?v=2.9.0-rc.1" defer></script>
 </body>
 </html>

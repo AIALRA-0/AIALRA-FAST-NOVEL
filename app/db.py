@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS claims (
     source_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
     target_entity_id INTEGER REFERENCES entities(id) ON DELETE CASCADE,
     predicate TEXT NOT NULL,
+    directionality TEXT NOT NULL DEFAULT 'directed',
+    reverse_predicate TEXT,
+    temporal_scope TEXT NOT NULL DEFAULT 'current',
     summary TEXT NOT NULL,
     confidence REAL NOT NULL,
     status TEXT NOT NULL DEFAULT 'unreviewed',
@@ -905,6 +908,81 @@ CREATE TABLE IF NOT EXISTS knowledge_revisions (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS world_systems (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    structure_type TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(book_id, name, category)
+);
+
+CREATE TABLE IF NOT EXISTS world_system_nodes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES world_systems(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    rank_value REAL,
+    concept_id INTEGER REFERENCES concepts(id) ON DELETE SET NULL,
+    evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+    effective_from_segment INTEGER NOT NULL DEFAULT 0,
+    effective_to_segment INTEGER,
+    confidence REAL NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(system_id, label)
+);
+
+CREATE TABLE IF NOT EXISTS world_system_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    system_id INTEGER NOT NULL REFERENCES world_systems(id) ON DELETE CASCADE,
+    source_node_id INTEGER NOT NULL REFERENCES world_system_nodes(id) ON DELETE CASCADE,
+    target_node_id INTEGER NOT NULL REFERENCES world_system_nodes(id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL,
+    confidence REAL NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'accepted',
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(system_id, source_node_id, target_node_id, relation_type)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_completion_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    concept_id INTEGER REFERENCES concepts(id) ON DELETE CASCADE,
+    instruction TEXT NOT NULL,
+    segment_ids_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'queued',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL DEFAULT 'human',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS ui_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_key TEXT NOT NULL,
+    viewport TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    reproduction TEXT NOT NULL DEFAULT '',
+    acceptance TEXT NOT NULL DEFAULT '',
+    screenshot_path TEXT NOT NULL DEFAULT '',
+    regression_test TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS feature_flags (
     book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     feature_key TEXT NOT NULL,
@@ -955,6 +1033,11 @@ CREATE INDEX IF NOT EXISTS idx_concepts_book ON concepts(book_id, category, pref
 CREATE INDEX IF NOT EXISTS idx_concept_relations_book ON concept_relations(book_id, source_concept_id, relation);
 CREATE INDEX IF NOT EXISTS idx_knowledge_claims_book ON knowledge_claims(book_id, concept_id, status);
 CREATE INDEX IF NOT EXISTS idx_knowledge_revisions_target ON knowledge_revisions(book_id, target_type, target_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_world_systems_book ON world_systems(book_id, status, category);
+CREATE INDEX IF NOT EXISTS idx_world_system_nodes_system ON world_system_nodes(system_id, status, rank_value);
+CREATE INDEX IF NOT EXISTS idx_world_system_relations_system ON world_system_relations(system_id, status);
+CREATE INDEX IF NOT EXISTS idx_knowledge_completion_book ON knowledge_completion_requests(book_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_ui_issues_status ON ui_issues(status, severity, page_key);
 """
 
 
@@ -979,6 +1062,8 @@ def initialize(path: Path) -> None:
         _migrate_quality_harness(connection)
         _migrate_control_plane(connection)
         _migrate_v27(connection)
+        _migrate_v28(connection)
+        _migrate_v29(connection)
         _repair_derived_self_routes(connection)
         _repair_mismatched_evidence_segments(connection)
         connection.execute(
@@ -1031,7 +1116,6 @@ def _migrate_v27(connection: sqlite3.Connection) -> None:
         SELECT id, book_id, summary, 'legacy_migration' FROM events
         """
     )
-
     # 旧世界卡与条目先迁入概念层，再逐条建立带来源边界的原子说明。
     connection.execute(
         """
@@ -1087,6 +1171,74 @@ def _migrate_v27(connection: sqlite3.Connection) -> None:
             AND ev.target_type = k.subject_type AND ev.target_id = k.subject_id
         """
     )
+
+
+def _migrate_v28(connection: sqlite3.Connection) -> None:
+    """Add reversible 2.8 relation semantics and feature switches to existing books."""
+
+    from app.relations import SAFE_REVERSE_PREDICATES, SYMMETRIC_PREDICATES
+
+    existing = {str(row[1]) for row in connection.execute("PRAGMA table_info(claims)")}
+    additions = (
+        "directionality TEXT NOT NULL DEFAULT 'directed'",
+        "reverse_predicate TEXT",
+        "temporal_scope TEXT NOT NULL DEFAULT 'current'",
+    )
+    for definition in additions:
+        column = definition.split()[0]
+        if column not in existing:
+            connection.execute(f"ALTER TABLE claims ADD COLUMN {definition}")
+
+    for predicate in sorted(SYMMETRIC_PREDICATES):
+        connection.execute(
+            """
+            UPDATE claims SET directionality = 'bidirectional', reverse_predicate = predicate
+            WHERE predicate = ? AND directionality = 'directed'
+            """,
+            (predicate,),
+        )
+    for predicate, reverse_predicate in SAFE_REVERSE_PREDICATES.items():
+        connection.execute(
+            """
+            UPDATE claims SET directionality = 'bidirectional', reverse_predicate = ?
+            WHERE predicate = ? AND directionality = 'directed'
+            """,
+            (reverse_predicate, predicate),
+        )
+
+    features = ("relation_semantics_v2", "atlas_workspace_v3", "library_workspace_v2")
+    for book in connection.execute("SELECT id FROM books"):
+        for feature in features:
+            connection.execute(
+                "INSERT OR IGNORE INTO feature_flags(book_id, feature_key, enabled) VALUES (?, ?, 1)",
+                (int(book["id"]), feature),
+            )
+
+
+def _migrate_v29(connection: sqlite3.Connection) -> None:
+    """Enable the reversible 2.9 interaction, atlas, cost, systems, and reader layers."""
+
+    existing_node_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(world_system_nodes)")}
+    if "evidence_id" not in existing_node_columns:
+        connection.execute("ALTER TABLE world_system_nodes ADD COLUMN evidence_id INTEGER REFERENCES evidence(id) ON DELETE SET NULL")
+    existing_relation_columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(world_system_relations)")}
+    if "updated_at" not in existing_relation_columns:
+        connection.execute("ALTER TABLE world_system_relations ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+
+    features = (
+        "ui_foundation_v3",
+        "atlas_lod_v4",
+        "guided_3d_v1",
+        "cost_forecast_v2",
+        "system_graph_v1",
+        "knowledge_reader_v3",
+    )
+    for book in connection.execute("SELECT id FROM books"):
+        for feature in features:
+            connection.execute(
+                "INSERT OR IGNORE INTO feature_flags(book_id, feature_key, enabled) VALUES (?, ?, 1)",
+                (int(book["id"]), feature),
+            )
 
 
 def _repair_derived_self_routes(connection: sqlite3.Connection) -> None:

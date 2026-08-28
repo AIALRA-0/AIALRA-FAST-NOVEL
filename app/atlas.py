@@ -10,7 +10,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 
-LAYOUT_VERSION = "semantic-atlas-v2.3"
+LAYOUT_VERSION = "semantic-atlas-v2.9-lod4"
 _DIRECTION_VECTORS = {
     "north": (0.0, -1.0), "south": (0.0, 1.0),
     "east": (1.0, 0.0), "west": (-1.0, 0.0),
@@ -60,6 +60,33 @@ def _expanded_hull(points: list[tuple[float, float]], padding: float = 54.0) -> 
             "y": round(y + (y - center_y) / distance * padding, 2),
         })
     return expanded
+
+
+def _region_boundary(points: list[tuple[float, float]], padding: float = 54.0) -> list[dict[str, float]]:
+    """Return a drawable semantic boundary even for one or two contained places."""
+
+    if not points:
+        return []
+    if len(points) == 1:
+        x, y = points[0]
+        return [
+            {"x": round(x - padding, 2), "y": round(y - padding * 0.72, 2)},
+            {"x": round(x + padding, 2), "y": round(y - padding * 0.72, 2)},
+            {"x": round(x + padding, 2), "y": round(y + padding * 0.72, 2)},
+            {"x": round(x - padding, 2), "y": round(y + padding * 0.72, 2)},
+        ]
+    if len(points) == 2:
+        min_x = min(point[0] for point in points) - padding
+        max_x = max(point[0] for point in points) + padding
+        min_y = min(point[1] for point in points) - padding * 0.72
+        max_y = max(point[1] for point in points) + padding * 0.72
+        return [
+            {"x": round(min_x, 2), "y": round(min_y, 2)},
+            {"x": round(max_x, 2), "y": round(min_y, 2)},
+            {"x": round(max_x, 2), "y": round(max_y, 2)},
+            {"x": round(min_x, 2), "y": round(max_y, 2)},
+        ]
+    return _expanded_hull(points, padding)
 
 
 def _containment_depths(node_ids: list[int], relations: list[dict[str, Any]]) -> tuple[dict[int, int], dict[int, int]]:
@@ -285,6 +312,54 @@ def _layout_nodes(
     }
 
 
+def _separate_sibling_groups(
+    positions: dict[int, tuple[float, float]],
+    groups: list[list[int]],
+    padding: float = 110.0,
+) -> dict[int, tuple[float, float]]:
+    """Move disjoint topology groups apart without changing membership or relative shape."""
+
+    result = dict(positions)
+    for _ in range(18):
+        changed = False
+        boxes: list[tuple[list[int], float, float, float, float]] = []
+        for group in groups:
+            members = [item for item in group if item in result]
+            if not members:
+                continue
+            xs = [result[item][0] for item in members]
+            ys = [result[item][1] for item in members]
+            boxes.append((members, min(xs) - padding, min(ys) - padding, max(xs) + padding, max(ys) + padding))
+        for index, (left_members, left_min_x, left_min_y, left_max_x, left_max_y) in enumerate(boxes):
+            for right_members, right_min_x, right_min_y, right_max_x, right_max_y in boxes[index + 1:]:
+                overlap_x = min(left_max_x, right_max_x) - max(left_min_x, right_min_x)
+                overlap_y = min(left_max_y, right_max_y) - max(left_min_y, right_min_y)
+                if overlap_x <= 0 or overlap_y <= 0:
+                    continue
+                changed = True
+                left_center_x = (left_min_x + left_max_x) / 2
+                right_center_x = (right_min_x + right_max_x) / 2
+                left_center_y = (left_min_y + left_max_y) / 2
+                right_center_y = (right_min_y + right_max_y) / 2
+                if overlap_x <= overlap_y:
+                    direction = -1 if left_center_x <= right_center_x else 1
+                    move_x, move_y = direction * (overlap_x / 2 + 8), 0.0
+                else:
+                    direction = -1 if left_center_y <= right_center_y else 1
+                    move_x, move_y = 0.0, direction * (overlap_y / 2 + 8)
+                for node_id in left_members:
+                    x, y = result[node_id]
+                    result[node_id] = (x + move_x, y + move_y)
+                for node_id in right_members:
+                    x, y = result[node_id]
+                    result[node_id] = (x - move_x, y - move_y)
+        if not changed:
+            break
+    min_x = min((point[0] for point in result.values()), default=0.0)
+    min_y = min((point[1] for point in result.values()), default=0.0)
+    return {node_id: (round(x - min_x + 100, 2), round(y - min_y + 100, 2)) for node_id, (x, y) in result.items()}
+
+
 def build_map_layout_snapshot(
     connection: sqlite3.Connection,
     book_id: int,
@@ -351,6 +426,7 @@ def build_map_layout_snapshot(
     edges = [edge for edge in relation_edges + journey_edges + chronology_edges if edge[0] in valid_ids and edge[1] in valid_ids]
     components = _semantic_region_groups(node_ids, edges, story_locations)
     positions = _layout_nodes(book_id, node_ids, edges, relations, components)
+    positions = _separate_sibling_groups(positions, components)
     depths, parent = _containment_depths(node_ids, relations)
     directional_ids = {
         int(item["source_entity_id"]) for item in relations if item["relative_position"] in _DIRECTION_VECTORS
@@ -369,21 +445,92 @@ def build_map_layout_snapshot(
         }
         for place in places
     ]
+    name_by_id = {int(place["id"]): str(place["name"]) for place in places}
+    relation_ids_by_container: dict[int, list[int]] = defaultdict(list)
+    children_by_container: dict[int, set[int]] = defaultdict(set)
+    for relation in relations:
+        source = int(relation["source_entity_id"])
+        target = int(relation["target_entity_id"])
+        if relation["relative_position"] == "inside":
+            child, container = source, target
+        elif relation["relative_position"] == "contains":
+            child, container = target, source
+        else:
+            continue
+        children_by_container[container].add(child)
+        relation_ids_by_container[container].append(int(relation["id"]))
+
     regions = []
+    containment_region_ids = {container: f"containment-{container}" for container in children_by_container}
+    for index, container in enumerate(sorted(children_by_container)):
+        members = sorted({container, *children_by_container[container]})
+        hull = _region_boundary([positions[node_id] for node_id in members if node_id in positions], padding=46.0)
+        if len(hull) < 3:
+            continue
+        centroid = {
+            "x": round(sum(point["x"] for point in hull) / len(hull), 2),
+            "y": round(sum(point["y"] for point in hull) / len(hull), 2),
+        }
+        parent_container = parent.get(container)
+        regions.append({
+            "id": containment_region_ids[container],
+            "label": name_by_id.get(container, f"区域 {container}"),
+            "kind": "evidence_containment",
+            "node_ids": members,
+            "parent_region_id": containment_region_ids.get(parent_container),
+            "containment_depth": depths.get(container, 0),
+            "hull": hull,
+            "centroid": centroid,
+            "palette_index": index % 6,
+            "evidence_ids": sorted(set(relation_ids_by_container[container])),
+            "boundary_kind": "semantic",
+            "display_policy": "always",
+            "formal_geography": False,
+            "evidence_level": "explicit",
+        })
     for index, component in enumerate(components):
         if len(component) < 3:
             continue
-        hull = _expanded_hull([positions[node_id] for node_id in component], padding=36.0)
+        hull = _region_boundary([positions[node_id] for node_id in component], padding=36.0)
         if len(hull) >= 3:
+            centroid = {
+                "x": round(sum(point["x"] for point in hull) / len(hull), 2),
+                "y": round(sum(point["y"] for point in hull) / len(hull), 2),
+            }
             regions.append({
-                "id": f"semantic-{index + 1}",
+                "id": f"topology-{index + 1}",
                 "label": f"故事拓扑片区 {index + 1}",
                 "kind": "topological_cluster",
                 "node_ids": component,
+                "parent_region_id": None,
+                "containment_depth": 0,
                 "hull": hull,
+                "centroid": centroid,
+                "palette_index": index % 6,
+                "evidence_ids": [],
+                "boundary_kind": "semantic",
+                "display_policy": "focus_only",
                 "formal_geography": False,
                 "evidence_level": "semantic",
             })
+    label_padding_x = 88.0
+    label_padding_y = 54.0
+    min_world_x = min((node["x"] - label_padding_x for node in nodes), default=0.0)
+    max_world_x = max((node["x"] + label_padding_x for node in nodes), default=1080.0)
+    min_world_y = min((node["y"] - label_padding_y for node in nodes), default=0.0)
+    max_world_y = max((node["y"] + label_padding_y for node in nodes), default=700.0)
+    aggregates = [
+        {
+            "id": f"aggregate-{index + 1}",
+            "label": f"故事区域 {index + 1}",
+            "member_node_ids": component,
+            "x": round(sum(positions[item][0] for item in component) / len(component), 2),
+            "y": round(sum(positions[item][1] for item in component) / len(component), 2),
+            "count": len(component),
+        }
+        for index, component in enumerate(components) if component
+    ]
+    main_route_nodes = list(dict.fromkeys(story_locations))
     payload = {
         "layout_version": LAYOUT_VERSION,
         "through_segment": boundary,
@@ -392,6 +539,18 @@ def build_map_layout_snapshot(
         "fact_source": "overview.story_map_steps",
         "nodes": nodes,
         "regions": regions,
+        "world_bounds": {
+            "min_x": round(min_world_x, 2), "min_y": round(min_world_y, 2),
+            "max_x": round(max_world_x, 2), "max_y": round(max_world_y, 2),
+            "width": round(max_world_x - min_world_x, 2),
+            "height": round(max_world_y - min_world_y, 2),
+        },
+        "detail_levels": {
+            "low": {"aggregates": aggregates, "node_ids": main_route_nodes},
+            "medium": {"aggregates": [], "node_ids": sorted(set(main_route_nodes + [item for component in components[:8] for item in component]))},
+            "high": {"aggregates": [], "node_ids": node_ids},
+        },
+        "label_budget": {"low": 18, "medium": 52, "high": 180},
         "routes": [
             {"source": source, "target": target, "kind": "semantic_topology"}
             for source, target in sorted(set(edges))

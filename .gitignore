@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 data/*.db
 data/*.db-*
+data/*.log
 data/*credentials*.json
 data/backups/
 data/uploads/

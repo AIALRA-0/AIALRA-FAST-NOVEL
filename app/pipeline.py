@@ -12,6 +12,7 @@ from app.config import Settings
 from app.consolidation import build_analysis_context, consolidate_book, normalized_name
 from app.db import connect, transaction
 from app.models import ExtractionResult
+from app.relations import normalize_relation_semantics
 from app.providers import Provider, ProviderError, create_provider
 
 
@@ -257,18 +258,24 @@ def persist_extraction(
         if location is None or source_id is None or target_id is None:
             rejected += 1
             continue
+        directionality, reverse_predicate = normalize_relation_semantics(
+            candidate.predicate, candidate.directionality, candidate.reverse_predicate,
+        )
         connection.execute(
             """
             INSERT OR IGNORE INTO claims(
-                book_id, source_entity_id, target_entity_id, predicate, summary,
-                confidence, first_segment, created_by
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'model')
+                book_id, source_entity_id, target_entity_id, predicate, directionality,
+                reverse_predicate, temporal_scope, summary, confidence, first_segment, created_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'model')
             """,
             (
                 book_id,
                 source_id,
                 target_id,
                 candidate.predicate,
+                directionality,
+                reverse_predicate,
+                candidate.temporal_scope,
                 candidate.summary,
                 candidate.confidence,
                 segment["ordinal"],
