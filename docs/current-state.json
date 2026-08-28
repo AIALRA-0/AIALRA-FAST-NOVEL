@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.0-rc.1",
   "status": "release_candidate_blocked_by_gold_evaluation_gate",
-  "source_commit": "5eef1e9",
+  "source_commit": "b472d24",
   "active_objective": "交付统一选择器、防剧透输入、费用预测 2.0、多级二维地图、导览式三维图集、质量工作台、体系图谱和剧情知识胶囊，并发布 2.9.0 候选版",
   "contracts": {
     "fact_source": "原文证据",
@@ -25,20 +25,23 @@
     "gold_evaluation": "blocked:28-confirmed-of-300;2-holdout;1-evaluated-book-of-5",
     "cost_estimate": "v2-implemented:rendered-input-cache-exclusion-task_breakdown-median-conservative-confidence-backtest;historical-50-segment-run:estimated-0.85907-actual-0.2940147;v2-live-25-percent-target-pending-more-paid-samples",
     "windows_package": "passed:2.9.0-rc.1-readyz-and-candidate-page;sha256-cc6a369394d9d67699b858883f9ab6f143fd8122c4cfadc584260833c6a5d8ce",
-    "safe_publish": "2.7.0-passed:61f0c82-publication-copy;2.9.0-rc.1-pending",
-    "github_ci": "passed:33102636286",
-    "vps_container": "passed:2.7.0-ready;readonly;nonroot;localhost-only",
-    "auth_gateway_route": "passed:anonymous-302-when-host-resolved-manually;public-dns-pending",
-    "public_authentication": "blocked:verify-dns-tls-authentik-and-revoke-chat-exposed-cloudflare-token-before-2.9-deploy"
+    "safe_publish": "passed:2.9.0-rc.1;531-reviewed;0-block;0-review;0-coverage-gap",
+    "github_ci": "passed:33202079240",
+    "vps_container": "passed:2.9.0-rc.1-ready;readonly;nonroot;localhost-only;database-integrity-ok;rollback-backup-retained",
+    "auth_gateway_route": "passed:public-dns;cloudflare-tls;anonymous-302-to-authentik",
+    "public_authentication": "partial:anonymous-gateway-passed;authenticated-browser-return-not-verified;chat-exposed-cloudflare-token-still-requires-owner-revocation"
   },
   "publication": {
     "github": "public-repository",
-    "github_commit": "61f0c82d1e7c184fdf5c9e1a3187d6fe4f282d1b",
-    "deployment": "vps-container-2.7.0-ready",
+    "github_commit": "d89b15ef2ec776e12ed1f22a667916f23da2a28b",
+    "github_release": "v2.9.0-rc.1-prerelease",
+    "deployment": "vps-container-2.9.0-rc.1-ready",
     "hostname": "novel.aialra.online",
-    "dns": "pending-zone-scoped-token",
-    "tls_certificate": "pending-dns",
-    "authentication": "ExampleOrg Authentik unified gateway configured; public verification pending DNS and TLS"
+    "dns": "passed:cloudflare-proxied-a-records",
+    "tls_certificate": "passed:https-and-hsts",
+    "authentication": "Authentik gateway passed anonymous redirect; authenticated browser return remains a manual acceptance item",
+    "rollback": "2.7.0 image and pre-2.9 SQLite backup retained",
+    "windows_asset": "local-only:binary archive not attached because nested dependency scan did not pass"
   },
   "last_updated": "2026-08-28"
 }
