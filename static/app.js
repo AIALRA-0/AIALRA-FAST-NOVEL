@@ -3148,7 +3148,17 @@ function renderDatabase(query = "", category = "all") {
   const conceptRows = concepts.length ? `<div class="concept-list">${concepts.map((concept) => `<button class="concept-row" data-concept="${concept.id}" type="button"><span><strong>${escapeHtml(concept.preferred_label)}</strong><span>${escapeHtml(concept.description || "尚未填写读者说明")}${concept.aliases?.length ? ` · 别名：${escapeHtml(concept.aliases.join("、"))}` : ""}</span></span><small>${escapeHtml(categoryLabels[concept.category] || concept.category)} · ${Number(concept.claim_count || 0)} 条事实 · ${Number(concept.evidence_count || 0)} 条证据</small></button>`).join("")}</div>` : emptyState("没有匹配的知识概念", "更换关键词或分类，无法自动判断的内容会保留在待归类中。");
   const parentOptions = [`<option value="">不设置上位概念</option>`, ...(state.concepts || []).filter((item) => item.status === "active").map((item) => `<option value="${item.id}">${escapeHtml(item.preferred_label)}</option>`)].join("");
   $("#view-panel").innerHTML = panelHead("知识库", "原子事实、概念分类和读者说明分层保存；原文、人工内容与外部资料不会混成一种证据。") + `<div class="knowledge-workspace"><aside class="knowledge-sidebar"><h3>分类</h3>${facetButtons}<details class="world-create"><summary>创建概念或文件夹</summary><div class="world-create-form"><label>分类<input id="concept-create-category" maxlength="80" value="term" placeholder="例如：skill"></label><label>名称<input id="concept-create-label" maxlength="160" placeholder="稳定、便于检索的名称"></label><label>上位概念<select id="concept-create-parent">${parentOptions}</select></label><label>别名<input id="concept-create-aliases" maxlength="500" placeholder="使用逗号分隔"></label><label>说明<textarea id="concept-create-description" rows="4" maxlength="5000"></textarea></label><button id="concept-create-submit" class="button button-primary" type="button">创建概念</button></div></details></aside><section class="knowledge-main"><div class="database-toolbar"><input id="entry-search" class="search-input" value="${escapeHtml(query)}" placeholder="搜索名称、别名、说明或证据" aria-label="搜索知识库"></div><div class="knowledge-summary-grid"><article><strong>${Number(facets.concept_count || 0)}</strong><span>知识概念</span></article><article><strong>${Number(facets.evidence_link_count || 0)}</strong><span>证据连接</span></article><article><strong>${Number(facets.needs_classification || 0)}</strong><span>待归类</span></article></div>${conceptRows}</section></div>`;
-  $("#entry-search").addEventListener("input", (event) => renderDatabase(event.target.value, category));
+  $("#entry-search").addEventListener("input", (event) => {
+    const value = event.target.value;
+    window.clearTimeout(state.knowledgeSearchTimer);
+    state.knowledgeSearchTimer = window.setTimeout(() => {
+      if (state.view !== "database") return;
+      renderDatabase(value, category);
+      const search = $("#entry-search");
+      search?.focus();
+      search?.setSelectionRange(value.length, value.length);
+    }, 120);
+  });
   $$(".knowledge-facet").forEach((button) => button.addEventListener("click", () => renderDatabase(query, button.dataset.category)));
   $$(".concept-row").forEach((button) => button.addEventListener("click", () => openConceptDetails(Number(button.dataset.concept))));
   $("#concept-create-submit").addEventListener("click", async () => {

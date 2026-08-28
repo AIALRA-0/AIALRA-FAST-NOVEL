@@ -97,7 +97,7 @@ test("三层知识库可检索并在固定右栏显示证据、编辑和历史",
   await expect(page.locator(".knowledge-workspace")).toBeVisible();
   await page.locator("#entry-search").fill("核心危机");
   await expect(page.locator(".concept-row")).toHaveCount(1);
-  await page.locator(".concept-row").click();
+  await page.locator(".concept-row").filter({ hasText: "核心危机" }).first().click();
   await expect(page.locator("#inspector")).toHaveClass(/open/);
   await expect(page.locator(".knowledge-claim")).toHaveCount(1);
   await expect(page.locator(".knowledge-history")).toBeVisible();
