@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "product": "小说证据图谱",
-  "release": "2.9.1-rc.1",
+  "release": "2.9.1-rc.2",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "release-v2.9.1-rc.1-660f28d3cb709b26198d5e7ad6f82e7c351c6f99",
+  "source_commit": "working-tree-2.9.1-rc.2",
   "active_objective": "交付地图控制栏防重叠、全部区域可见、可信金标准状态和混合五书评测范围",
   "contracts": {
     "fact_source": "原文证据",
@@ -14,7 +14,7 @@
     "public_data_policy": "只允许空库或合成演示数据"
   },
   "quality_gate": {
-    "unit_tests": "passed:124;skipped:1-environment-dependent;collected:125",
+    "unit_tests": "passed:125;skipped:1-environment-dependent;collected:126",
     "javascript_syntax": "passed",
     "browser_flows": "passed:7;skipped:3-specialized-long-form-environment",
     "responsive_map_controls": "passed:5-viewports-by-4-effective-zoom-levels;20-bounding-box-checks",
@@ -26,14 +26,14 @@
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60;2-modern-slots-await-authorization",
     "safe_publish": "passed:556-approved;0-review;0-block;0-coverage-gap",
     "github_ci": "passed:quality-gate-run-33209165566",
-    "vps_container": "passed:2.9.1-rc.1-ready-and-healthy",
+    "vps_container": "remediation-required:2.9.1-rc.1-ready-and-healthy;quality-corpus-endpoint-missing-container-data",
     "public_authentication": "partial:2.9.1-anonymous-home-api-health-redirect-to-authentik;authenticated-browser-acceptance-pending"
   },
   "publication": {
     "github": "public-repository",
     "github_commit": "660f28d3cb709b26198d5e7ad6f82e7c351c6f99",
-    "github_release": "published-v2.9.1-rc.1-prerelease",
-    "deployment": "vps-running-2.9.1-rc.1-from-2295408",
+    "github_release": "published-v2.9.1-rc.1-prerelease;pending-v2.9.1-rc.2-prerelease",
+    "deployment": "vps-running-2.9.1-rc.1-with-corpus-endpoint-remediation-pending",
     "hostname": "novel.aialra.online",
     "authentication": "Authentik gateway",
     "rollback": "pre-2.9.1-data-backup-and-2.9.0-rc.1-image-release-retained"

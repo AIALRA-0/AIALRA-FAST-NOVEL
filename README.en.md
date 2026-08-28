@@ -4,7 +4,7 @@
 
 Novel Atlas turns long-form fiction into a character graph, story chronology, 2D/3D semantic world map, and searchable knowledge base, while keeping an exact source passage for every accepted fact
 
-The current version is the `2.9.1-rc.1` release candidate. It is a runnable personal project, not a hosted multi-tenant service with a service-level commitment
+The current version is the `2.9.1-rc.2` release candidate. It is a runnable personal project, not a hosted multi-tenant service with a service-level commitment
 
 ![2D semantic world map with synchronized chronology playback](docs/assets/novel-atlas-map-2d.png)
 
@@ -92,9 +92,9 @@ npx playwright test tests/e2e_ui.spec.js --reporter=line # Run synthetic browser
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.ps1 # Verify version and dual-view contracts
 ```
 
-The current 2.9.1-rc.1 gate reports
+The current 2.9.1-rc.2 gate reports
 
-- 124 passing Python tests and 1 environment-dependent skip, including deterministic import checks for 1,011 source segments and 3,283,083 characters across five local public-domain works
+- 125 passing Python tests and 1 environment-dependent skip, including deterministic import checks for 1,011 source segments and 3,283,083 characters across five local public-domain works
 - 7 passing Chromium flows, with 3 specialized long-form acceptance flows conditionally skipped in this run
 - 20 bounding-box checks across five viewport sizes and four effective zoom levels, with all four large-demo regions visible in both 2D and 3D
 - the current chronology, place, people, and source button remain visible at 1366×768, while stale story-context requests cannot cross book switches

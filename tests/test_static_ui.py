@@ -22,6 +22,12 @@ def test_release_version_is_consistent_across_state_api_and_page() -> None:
     assert f'version="{state["release"]}"' in _text("app/main.py")
 
 
+def test_container_includes_the_public_quality_corpus_manifest() -> None:
+    dockerfile = _text("Dockerfile")
+    assert "COPY evals ./evals" in dockerfile
+    assert (ROOT / "evals" / "quality_corpus_manifest.json").exists()
+
+
 def test_map_2d_and_3d_share_one_story_step_state() -> None:
     script = _text("static/app.js")
     assert script.count("function storyMapSteps()") == 1

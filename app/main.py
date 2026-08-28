@@ -193,7 +193,7 @@ async def lifespan(_: FastAPI):
         job_manager = None
 
 
-app = FastAPI(title="小说证据图谱", version="2.9.1-rc.1", lifespan=lifespan)
+app = FastAPI(title="小说证据图谱", version="2.9.1-rc.2", lifespan=lifespan)
 
 
 def rows(items: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -4681,7 +4681,7 @@ def patch_ui_issue(issue_id: int, request: UiIssuePatch) -> dict[str, Any]:
 def health() -> dict[str, str]:
     """供本机容器与反向代理检查进程状态，不返回书库或模型信息。"""
 
-    return {"status": "ok", "version": "2.9.1-rc.1"}
+    return {"status": "ok", "version": "2.9.1-rc.2"}
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -4690,7 +4690,7 @@ def ready() -> dict[str, str]:
 
     with connect(settings.database_path) as connection:
         connection.execute("SELECT 1").fetchone()
-    return {"status": "ready", "version": "2.9.1-rc.1"}
+    return {"status": "ready", "version": "2.9.1-rc.2"}
 
 
 @app.get("/")

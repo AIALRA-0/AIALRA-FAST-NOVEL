@@ -11,6 +11,7 @@ COPY pyproject.toml ./
 COPY app ./app
 COPY static ./static
 COPY prompts ./prompts
+COPY evals ./evals
 COPY launcher.py ./launcher.py
 
 RUN python -m pip install --no-cache-dir . \

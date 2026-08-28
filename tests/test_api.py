@@ -27,10 +27,10 @@ def test_health_and_readiness_endpoints(tmp_path: Path) -> None:
 
     with client_for(tmp_path) as client:
         health = client.get("/healthz").json()
-        assert health == {"status": "ok", "version": "2.9.1-rc.1"}
+        assert health == {"status": "ok", "version": "2.9.1-rc.2"}
         readiness = client.get("/readyz")
         assert readiness.status_code == 200
-        assert readiness.json() == {"status": "ready", "version": "2.9.1-rc.1"}
+        assert readiness.json() == {"status": "ready", "version": "2.9.1-rc.2"}
 
 
 def test_relation_direction_can_be_reviewed_without_creating_a_second_fact(tmp_path: Path) -> None:
