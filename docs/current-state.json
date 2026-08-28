@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.1-rc.2",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "working-tree-2.9.1-rc.2",
+  "source_commit": "release-v2.9.1-rc.2-524e7c3b08c772a01a0ab6a7e362e8eb4992e2a7",
   "active_objective": "交付地图控制栏防重叠、全部区域可见、可信金标准状态和混合五书评测范围",
   "contracts": {
     "fact_source": "原文证据",
@@ -24,19 +24,19 @@
     "benchmark_migration": "passed:28-machine-candidates;0-provable-human-confirmed;0-valid-sealed-holdouts",
     "formal_quality_corpus": "defined:3-classics;2-user-authorized-modern-slots;300-total;60-sealed-holdouts",
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60;2-modern-slots-await-authorization",
-    "safe_publish": "passed:556-approved;0-review;0-block;0-coverage-gap",
-    "github_ci": "passed:quality-gate-run-33209165566",
-    "vps_container": "remediation-required:2.9.1-rc.1-ready-and-healthy;quality-corpus-endpoint-missing-container-data",
+    "safe_publish": "passed:584-approved;0-review;0-block;0-coverage-gap",
+    "github_ci": "passed:quality-gate-run-33211171717",
+    "vps_container": "passed:2.9.1-rc.2-ready-healthy-corpus-endpoint-available",
     "public_authentication": "partial:2.9.1-anonymous-home-api-health-redirect-to-authentik;authenticated-browser-acceptance-pending"
   },
   "publication": {
     "github": "public-repository",
-    "github_commit": "660f28d3cb709b26198d5e7ad6f82e7c351c6f99",
-    "github_release": "published-v2.9.1-rc.1-prerelease;pending-v2.9.1-rc.2-prerelease",
-    "deployment": "vps-running-2.9.1-rc.1-with-corpus-endpoint-remediation-pending",
+    "github_commit": "524e7c3b08c772a01a0ab6a7e362e8eb4992e2a7",
+    "github_release": "published-v2.9.1-rc.2-prerelease",
+    "deployment": "vps-running-2.9.1-rc.2-from-524e7c3",
     "hostname": "novel.aialra.online",
     "authentication": "Authentik gateway",
-    "rollback": "pre-2.9.1-data-backup-and-2.9.0-rc.1-image-release-retained"
+    "rollback": "pre-rc2-data-backup-and-2.9.1-rc.1-image-release-retained"
   },
   "last_updated": "2026-08-28"
 }
