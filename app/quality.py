@@ -147,7 +147,9 @@ def build_quality_report(connection: sqlite3.Connection, book_id: int, visible: 
             COALESCE(SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END), 0) AS passed,
             COALESCE(SUM(CASE WHEN critical = 1 AND passed = 0 THEN 1 ELSE 0 END), 0) AS critical_failed,
             COALESCE(SUM(CASE WHEN passed IS NULL THEN 1 ELSE 0 END), 0) AS pending
-        FROM quality_benchmark_cases WHERE book_id = ?
+        FROM quality_benchmark_cases
+        WHERE book_id = ? AND confirmed_by_user = 1
+          AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
         """,
         (book_id,),
     ).fetchone()

@@ -421,6 +421,7 @@ function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
   const group = new GroupConstructor();
   group.name = "novel-atlas-semantic-regions";
   const palette = [0x7cb5df, 0xb693d0, 0xe2b975, 0x7fc7b7, 0xdc94aa, 0x9ca5dc];
+  const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
   let created = 0;
   regions.forEach((region, regionIndex) => {
     const hull = (region.hull || []).filter((point) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
@@ -442,17 +443,18 @@ function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
     geometry.setAttribute("position", new PositionAttributeConstructor(new Float32Array(vertices), 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals?.();
+    const active = currentLocationId > 0 && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId);
     const material = new MaterialConstructor({
       color: palette[Number(region.palette_index ?? regionIndex) % palette.length],
       transparent: true,
-      opacity: region.kind === "evidence_containment" ? 0.18 : 0.08,
+      opacity: active ? (region.kind === "evidence_containment" ? 0.24 : 0.16) : (region.kind === "evidence_containment" ? 0.11 : 0.045),
       depthWrite: false,
     });
     const mesh = new MeshConstructor(geometry, material);
     mesh.name = `semantic-region:${region.id}`;
     mesh.position.z = Number(region.containment_depth || 0) * 86 - 24;
     mesh.renderOrder = -2;
-    mesh.userData = { ...(mesh.userData || {}), regionId: region.id, boundaryKind: "semantic" };
+    mesh.userData = { ...(mesh.userData || {}), regionId: region.id, boundaryKind: "semantic", active };
     group.add(mesh);
     created += 1;
   });
@@ -465,21 +467,14 @@ function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
 
 function map3DVisibleRegions() {
   const regions = state.mapLayout?.regions || [];
-  const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
-  const evidenceRegions = regions.filter((region) => region.kind === "evidence_containment");
-  const activeTopology = regions.find((region) =>
-    region.kind === "topological_cluster"
-      && currentLocationId
-      && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId)
-  );
-  if (evidenceRegions.length) return activeTopology ? [...evidenceRegions, activeTopology] : evidenceRegions;
-  if (activeTopology) return [activeTopology];
-  return regions.filter((region) => region.kind === "topological_cluster").slice(0, 1);
+  // 视角只改变相机和强调状态，不能从全世界视图中删除其他区域
+  return regions.filter((region) => (region.node_ids || []).length && (region.hull || []).length >= 3);
 }
 
 function resetMapStateForBook() {
   stopMapPlayback();
   disposeMapGraph();
+  state.storyContextSerial += 1;
   state.mapStep = 0;
   state.mapViewport = null;
   state.mapMarkerPoint = null;
@@ -1877,9 +1872,13 @@ function renderMap() {
     const regionNodes = (region.node_ids || []).filter((nodeId) => visibleLocationIds.has(Number(nodeId)));
     if (!regionNodes.length || (region.hull || []).length < 3) return "";
     const activeRegion = currentLocationId !== null && currentLocationId !== undefined && regionNodes.some((nodeId) => Number(nodeId) === Number(currentLocationId));
-    if (region.display_policy === "focus_only" && !activeRegion) return "";
     const path = region.hull.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${Number(point.x)} ${Number(point.y)}`).join(" ");
-    return `<g class="semantic-region region-${Number(region.palette_index ?? index) % 6}" data-region="${escapeHtml(region.id)}" tabindex="0" role="button"><path d="${path} Z"></path><title>${escapeHtml(region.label)}；语义区域不代表原文明示边界</title></g>`;
+    const centroid = region.centroid || {};
+    const regionClass = region.kind === "evidence_containment" ? "is-evidence" : "is-topology";
+    const label = Number.isFinite(Number(centroid.x)) && Number.isFinite(Number(centroid.y))
+      ? `<text class="semantic-region-label" x="${Number(centroid.x)}" y="${Number(centroid.y)}">${escapeHtml(region.label)}</text>`
+      : "";
+    return `<g class="semantic-region ${regionClass}${activeRegion ? " is-active" : " is-secondary"} region-${Number(region.palette_index ?? index) % 6}" data-region="${escapeHtml(region.id)}" tabindex="0" role="button"><path d="${path} Z"></path>${label}<title>${escapeHtml(region.label)}；${region.kind === "evidence_containment" ? "原文包含区域" : "故事组织区域"}；轮廓不代表真实地理边界</title></g>`;
   }).join("") : "";
   const geography = geographyRelations.slice(0, 36).map((relation) => {
     const start = points.get(relation.source_entity_id);
@@ -1934,19 +1933,24 @@ function renderMap() {
   const containmentCount = geographyRelations.filter((relation) => ["inside", "contains"].includes(relation.relative_position)).length;
   const directionCoverage = directionalCount / Math.max(1, locations.length);
   const projectionCount = [...points.values()].filter((point) => point.source === "stable_topology_projection").length;
+  const regionCoverage = state.mapLayout?.region_coverage || {};
+  const regionCoverageNote = state.mapPresentation === "atlas"
+    ? ` 当前共 ${Number(regionCoverage.generated_region_count || 0)} 个语义区域，已归区 ${Number(regionCoverage.assigned_place_count || 0)}/${Number(regionCoverage.total_place_count || locations.length)} 个地点${Number(regionCoverage.unassigned_place_count || 0) ? `，${Number(regionCoverage.unassigned_place_count)} 个待归区` : ""}。`
+    : "";
   const positionNote = directionalCount
-    ? `已使用 ${directionalCount} 条原文方向关系约束方位；${projectionCount} 个地点只使用稳定拓扑坐标。`
+    ? `已使用 ${directionalCount} 条原文方向关系约束方位；${projectionCount} 个地点只使用稳定拓扑坐标。${regionCoverageNote}`
     : containmentCount
-      ? `原文没有东南西北坐标；地图保持故事拓扑，三维纵深只使用 ${containmentCount} 条包含关系。`
+      ? `原文没有东南西北坐标；地图保持故事拓扑，三维纵深只使用 ${containmentCount} 条包含关系。${regionCoverageNote}`
       : routeTopology.length
-        ? `原文没有东南西北坐标；地图根据 ${routeTopology.length} 条移动连接形成稳定拓扑，不把坐标冒充真实方位。`
-        : "原文尚未提供可核验方位；地点使用稳定拓扑投影，坐标不代表真实方向。";
-  const mapModes = `<div class="map-view-toolbar"><div class="map-toolbar-groups"><div class="segmented-control" aria-label="地图表现"><button class="map-presentation${state.mapPresentation === "atlas" ? " active" : ""}" data-presentation="atlas" type="button">语义世界图</button><button class="map-presentation${state.mapPresentation === "evidence" ? " active" : ""}" data-presentation="evidence" type="button">证据逻辑图</button></div><div class="segmented-control" aria-label="地图维度"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D</button></div></div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；纵深只表示有证据的包含层级。" : state.mapPresentation === "atlas" ? "彩色区域只整理故事拓扑，不代表原文明示边界。" : "只显示能够回到原文的方向、包含和移动关系。"}</span></div>`;
-  const viewportControls = `<div class="map-viewport-controls" aria-label="地图视角"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-fit-world" type="button">全世界</button><button id="map-fit-region" type="button">当前区域</button><button id="map-fit-step" type="button">当前步骤</button><button id="map-zoom-reset" type="button">恢复视角</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div>`;
+        ? `原文没有东南西北坐标；地图根据 ${routeTopology.length} 条移动连接形成稳定拓扑，不把坐标冒充真实方位。${regionCoverageNote}`
+        : `原文尚未提供可核验方位；地点使用稳定拓扑投影，坐标不代表真实方向。${regionCoverageNote}`;
+  const mapModes = `<div class="map-view-toolbar"><div class="map-toolbar-groups"><div class="segmented-control" aria-label="地图表现"><button class="map-presentation${state.mapPresentation === "atlas" ? " active" : ""}" data-presentation="atlas" type="button">语义世界图</button><button class="map-presentation${state.mapPresentation === "evidence" ? " active" : ""}" data-presentation="evidence" type="button">证据逻辑图</button></div><div class="segmented-control" aria-label="地图维度"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D</button></div></div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；纵深只表示有证据的包含层级。" : state.mapPresentation === "atlas" ? "实线是原文包含区域，虚线是故事组织区域。" : "只显示能够回到原文的方向、包含和移动关系。"}</span></div>`;
+  const viewportControls = `<div class="map-viewport-tools"><details class="map-view-menu"><summary>视角</summary><div class="map-view-menu-popover" aria-label="地图视角"><button id="map-fit-world" type="button">全世界</button><button id="map-fit-region" type="button">当前区域</button><button id="map-fit-step" type="button">当前步骤</button><button id="map-zoom-reset" type="button">恢复视角</button></div></details><div class="map-viewport-controls" aria-label="地图缩放"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div></div>`;
+  const mapControlDeck = `<div class="map-control-deck">${mapModes}${viewportControls}</div>`;
   const mapCanvas = state.mapMode === "3d"
     ? `<div class="map-3d-shell"><div id="map-3d" class="map-3d" role="img" aria-label="可旋转、缩放并逐步播放的三维故事地图"></div><div id="map-3d-labels" class="map-3d-labels" aria-hidden="true"></div><div class="map-3d-axis" aria-hidden="true">${directionalCount ? "<span>北 ↑</span>" : "<span>平面方位未知</span>"}<span>纵深＝有证据的包含层级</span>${directionalCount ? "<span>东 →</span>" : "<span>拓扑坐标</span>"}</div></div>`
     : `<svg class="map-svg" viewBox="0 0 900 470" role="img" aria-label="可拖动、缩放并逐步播放的二维故事地图"><defs><marker id="route-arrow" markerUnits="userSpaceOnUse" markerWidth="3.2" markerHeight="3.2" refX="2.8" refY="1.6" orient="auto"><path d="M0,0 L3.2,1.6 L0,3.2 z" fill="context-stroke"></path></marker></defs>${paper}${semanticRegions}${geography}${topology}${routes}${nodes}<g id="journey-avatar" class="journey-avatar" ${initialMarker}><circle r="15"></circle><text y="4">${escapeHtml(initials)}</text></g></svg>`;
-  $("#view-panel").innerHTML = `${panelHead("逻辑地图与故事编年", "二维和三维共用同一个故事步骤、地点证据和播放状态。", legend)}<p class="map-position-note">${escapeHtml(positionNote)}</p>${protagonistPicker}${controls}<div class="journey-layout"><div class="map-stage">${mapModes}${viewportControls}${mapCanvas}</div><aside class="map-context-rail" aria-label="地图编年与地点信息"><div class="map-rail-tabs" role="tablist"><button class="map-rail-tab${state.mapRailTab === "chronology" ? " active" : ""}" data-tab="chronology" role="tab" type="button">故事编年</button><button class="map-rail-tab${state.mapRailTab === "location" ? " active" : ""}" data-tab="location" role="tab" type="button">地点档案</button></div><div id="map-chronology-panel" class="map-rail-panel" ${state.mapRailTab === "chronology" ? "" : "hidden"}><section id="map-event-card" class="map-event-card" aria-live="polite"></section><nav id="map-chronology-list" class="map-chronology-list" aria-label="完整故事编年"></nav></div><section id="map-location-panel" class="map-location-panel map-rail-panel" aria-live="polite" ${state.mapRailTab === "location" ? "" : "hidden"}></section></aside></div>`;
+  $("#view-panel").innerHTML = `${panelHead("逻辑地图与故事编年", "二维和三维共用同一个故事步骤、地点证据和播放状态。", legend)}<p class="map-position-note">${escapeHtml(positionNote)}</p>${protagonistPicker}${controls}<div class="journey-layout"><div class="map-stage">${mapControlDeck}${mapCanvas}</div><aside class="map-context-rail" aria-label="地图编年与地点信息"><div class="map-rail-tabs" role="tablist"><button class="map-rail-tab${state.mapRailTab === "chronology" ? " active" : ""}" data-tab="chronology" role="tab" type="button">故事编年</button><button class="map-rail-tab${state.mapRailTab === "location" ? " active" : ""}" data-tab="location" role="tab" type="button">地点档案</button></div><div id="map-chronology-panel" class="map-rail-panel" ${state.mapRailTab === "chronology" ? "" : "hidden"}><section id="map-event-card" class="map-event-card" aria-live="polite"></section><nav id="map-chronology-list" class="map-chronology-list" aria-label="完整故事编年"></nav></div><section id="map-location-panel" class="map-location-panel map-rail-panel" aria-live="polite" ${state.mapRailTab === "location" ? "" : "hidden"}></section></aside></div>`;
   bindProtagonistPicker();
   bindMapRailTabs();
   if (state.mapMode === "3d") {
@@ -1968,6 +1972,9 @@ function renderMap() {
     state.mapPresentation = nextPresentation;
     window.localStorage.setItem("novel-atlas-map-presentation", nextPresentation);
     renderMap();
+  }));
+  $$(".map-view-menu button").forEach((button) => button.addEventListener("click", () => {
+    button.closest("details")?.removeAttribute("open");
   }));
   $$(".semantic-region").forEach((regionElement) => {
     const activate = () => renderMapRegionDetails(regionElement.dataset.region);
@@ -2568,6 +2575,16 @@ function syncMap3DStep(event, visibleLocationIds, step, animate) {
     node.visible = true;
     node.focused = state.mapShowFullRoute || visibleLocationIds.has(node.locationId);
   });
+  state.map3DRegionGroup?.children?.forEach((mesh) => {
+    const region = (state.mapLayout?.regions || []).find((item) => String(item.id) === String(mesh.userData?.regionId));
+    if (!region || !mesh.material) return;
+    const active = currentLocationId !== null && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId);
+    mesh.userData.active = active;
+    mesh.material.opacity = active
+      ? (region.kind === "evidence_containment" ? 0.24 : 0.16)
+      : (region.kind === "evidence_containment" ? 0.11 : 0.045);
+    mesh.material.needsUpdate = true;
+  });
   links.forEach((link) => {
     const endpointsVisible = visibleLocationIds.has(link.sourceLocationId) && visibleLocationIds.has(link.targetLocationId);
     const nearStep = link.kind !== "journey" || (Number(link.step) >= step - 5 && Number(link.step) <= step + 3);
@@ -2720,7 +2737,7 @@ function setMapStep(nextStep, animate = true) {
     ? "原文没有确认当前地点，人物标记暂时隐藏"
     : leg?.gap_status === "unknown_path" ? "原文路径有缺口，节点仍完整保留" : "路线连续";
   $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
-  loadStoryContext(event);
+  loadStoryContext(event, Number(state.overview?.book?.id || state.bookId));
   $("#map-evidence")?.addEventListener("click", () => openEventSource(event));
   $$(".map-history-step").forEach((button) => button.addEventListener("click", () => {
     const historyStep = journey.findIndex((item) => Number(item.id) === Number(button.dataset.event));
@@ -2734,11 +2751,11 @@ function setMapStep(nextStep, animate = true) {
   }
 }
 
-async function loadStoryContext(event) {
+async function loadStoryContext(event, bookId = state.bookId) {
   const serial = ++state.storyContextSerial;
   try {
-    const context = await api(`/api/books/${state.bookId}/story-context/${event.id}?through_segment=${Number($("#progress-slider").value)}`);
-    if (serial !== state.storyContextSerial || Number(storyMapSteps()[state.mapStep]?.id) !== Number(event.id)) return;
+    const context = await api(`/api/books/${bookId}/story-context/${event.id}?through_segment=${Number($("#progress-slider").value)}`);
+    if (serial !== state.storyContextSerial || Number(state.bookId) !== Number(bookId) || Number(storyMapSteps()[state.mapStep]?.id) !== Number(event.id)) return;
     const card = $("#map-event-card");
     if (!card) return;
     const useful = (context.items || []).filter((item) => String(item.value || "").trim()).slice(0, 5);
@@ -3287,7 +3304,7 @@ function renderCollaboration() {
   const routes = control.model_routes.map((route) => `<article class="route-card ${route.eligible ? "eligible" : ""}"><span>${escapeHtml(route.provider)}</span><strong>${escapeHtml(route.model)}</strong><small>${route.eligible ? "已经通过赛马" : "尚未取得自动路由资格"} · ${route.enabled ? "已启用" : "已停用"} · 优先级 ${route.priority} · 连续失败 ${route.consecutive_failures}</small><div class="route-actions"><button class="button button-quiet route-toggle" data-provider="${escapeHtml(route.provider)}" data-enabled="${route.enabled ? "false" : "true"}" type="button">${route.enabled ? "停用" : "启用"}</button>${route.consecutive_failures ? `<button class="button button-quiet route-reset" data-provider="${escapeHtml(route.provider)}" type="button">复位熔断</button>` : ""}</div></article>`).join("");
   const promptHistory = control.prompt_versions.map((version) => `<button class="version-row prompt-version-open" data-task="${escapeHtml(version.task_key)}" data-id="${version.id}" type="button"><span>${escapeHtml(version.task_key)} · ${escapeHtml(version.version)}</span><strong>${escapeHtml(version.status)}</strong><small>${escapeHtml(version.change_note || "未填写修改说明")} · ${escapeHtml(version.prompt_hash.slice(0, 12))}</small></button>`).join("");
   const runs = control.runs.map((run) => `<details class="run-item"><summary><span>${escapeHtml(run.run_kind)}</span><strong>${escapeHtml(run.provider)} · ${escapeHtml(run.model)}</strong><small>${escapeHtml(run.status)} · 输入 ${Number(run.input_tokens || 0).toLocaleString()} · 输出 ${Number(run.output_tokens || 0).toLocaleString()} · ${run.estimated_cost_usd == null ? "订阅通道不换算美元" : formatCost(run)}</small></summary><div><p>合同 ${escapeHtml(run.contract_version)} · 提示词 ${escapeHtml(run.prompt_hash.slice(0, 16))}</p><p>评估集 ${escapeHtml(run.eval_suite_version)} · 数据结构 ${escapeHtml(run.schema_version)}</p><pre class="prompt-code compact">${escapeHtml(JSON.stringify({ validation: run.validation, conflicts: run.conflicts }, null, 2))}</pre></div></details>`).join("") || '<p class="benchmark-empty">还没有使用新版运行清单发起模型任务。</p>';
-  $("#view-panel").innerHTML = panelHead("协作控制", "要求、提示词、规则、模型、成本、验收和回归测试集中在同一页面。") + `<div class="control-plane"><section class="contract-banner"><div><span class="eyebrow">当前正式合同 · ${escapeHtml(contract.version)}</span><h3>${escapeHtml(contract.title)}</h3><p>${escapeHtml(contract.goal)}</p></div><div class="contract-metrics"><span><strong>100%</strong>关键案例</span><span><strong>95%</strong>保留集门槛</span><span><strong>${totalConfirmed}/300</strong>全库金标准</span></div></section><section class="evaluation-readiness ${evaluation.release_gate_passed ? "ready" : "blocked"}"><header><div><h3>${evaluation.release_gate_passed ? "正式发布门禁已通过" : "正式发布门禁尚未通过"}</h3><p>这是一条硬门禁。未达到公开样本规模时，任何模型都不会被标记为正式达标。</p></div><strong>${evaluation.holdout_accuracy_percent == null ? "尚无保留集结果" : `保留集 ${escapeHtml(evaluation.holdout_accuracy_percent)}%`}</strong></header><div class="evaluation-grid"><span>已确认案例 <strong>${evaluation.confirmed_cases}/300</strong></span><span>真实作品 <strong>${evaluation.book_count}/5 · ${evaluation.books_below_minimum_cases} 本不足 20 条</strong></span><span>保留集 <strong>${evaluation.holdout_cases} · ${evaluation.holdout_share_percent}%</strong></span><span>关键失败 <strong>${evaluation.critical_failures}</strong></span><span>证据逐字命中 <strong>${evaluation.quote_integrity_percent}%</strong></span><span>未解决冲突 <strong>${evaluation.unresolved_conflicts}</strong></span></div></section><div class="security-reminder"><strong>密钥轮换待办</strong><span>旧密钥曾出现在对话中。应用已经保证它们只在 Windows 加密存储中使用，但新密钥仍需在供应商账户后台生成后替换。</span></div><section class="control-section"><header><div><h3>反馈与验收闭环</h3><p>先保留原话，再明确系统理解和可直接检查的结果。</p></div></header><details class="control-form"><summary>登记新的反馈</summary><div class="control-form-grid"><label>你的原话<textarea id="collaboration-original" rows="3"></textarea></label><label>系统应当怎样理解<textarea id="collaboration-goal" rows="3"></textarea></label><label>验收条件，每行一条<textarea id="collaboration-acceptance" rows="4"></textarea></label><label>影响范围，每行一项<textarea id="collaboration-impact" rows="4"></textarea></label><label class="benchmark-critical"><input id="collaboration-confirm" type="checkbox"> 这项内容涉及目标、核心提示词、成本或发布，需要先确认</label><button id="collaboration-save" class="button button-primary" type="button">保存理解卡片</button></div></details><div class="collaboration-list">${feedback}</div></section><section class="control-section"><header><div><h3>完整提示词</h3><p>点击查看最终文本、分层来源、版本差异和单片段试跑。</p></div></header><div class="control-card-grid">${promptCards}</div>${promptDetailPanel()}<details class="prompt-history"><summary>查看全部提示词版本和回滚入口</summary><div class="version-list">${promptHistory}</div></details></section><section class="control-section two-column"><div><header><h3>阅读规则</h3><p>只能写分析方法，保存后自动进入最终提示词预览。</p></header><div class="inline-control-form"><textarea id="domain-rule-statement" rows="3" placeholder="请使用陈述句，例如：明确出现父母称谓时，应当检查对象能否唯一对应现有人物"></textarea><select id="domain-rule-task"><option value="all">全部任务</option><option value="extraction">片段抽取</option><option value="global_review">全书整理</option><option value="connectivity_audit">关系复审</option></select><button id="domain-rule-save" class="button button-primary" type="button">添加阅读规则</button></div><div class="rule-list">${rules}</div></div><div><header><h3>外部事实</h3><p>单独保存和标明来源，永远不成为小说原文证据。</p></header><div class="inline-control-form"><textarea id="external-fact-statement" rows="3" placeholder="作品外资料"></textarea><input id="external-fact-source" maxlength="300" placeholder="资料来源"><input id="external-fact-url" maxlength="1000" placeholder="来源地址，可不填"><button id="external-fact-save" class="button button-primary" type="button">保存外部资料</button></div><div class="rule-list">${facts}</div></div></section><section class="control-section"><header><div><h3>模型赛马与自动路由</h3><p>同一片段、同一提示词、同一金标准，关键案例失败就不能取得资格。</p></div><button id="model-race" class="button button-primary" type="button">运行一次真实单片段赛马</button></header><div class="route-grid">${routes}</div><div id="model-race-result" class="control-result"></div></section><section class="control-section"><header><h3>运行清单</h3><p>ChatGPT 登录通道不伪造单次美元费用。</p></header><div class="run-list">${runs}</div></section></div>`;
+  $("#view-panel").innerHTML = panelHead("协作控制", "要求、提示词、规则、模型、成本、验收和回归测试集中在同一页面。") + `<div class="control-plane"><section class="contract-banner"><div><span class="eyebrow">当前正式合同 · ${escapeHtml(contract.version)}</span><h3>${escapeHtml(contract.title)}</h3><p>${escapeHtml(contract.goal)}</p></div><div class="contract-metrics"><span><strong>100%</strong>关键案例</span><span><strong>95%</strong>保留集门槛</span><span><strong>${totalConfirmed}/300</strong>人工金标准</span></div></section><section class="evaluation-readiness ${evaluation.release_gate_passed ? "ready" : "blocked"}"><header><div><h3>${evaluation.release_gate_passed ? "正式发布门禁已通过" : "正式发布门禁尚未通过"}</h3><p>程序预置题只算候选；只有留下人工审核记录的案例才能进入准确率。</p></div><strong>${evaluation.holdout_accuracy_percent == null ? "尚无有效保留集" : `保留集 ${escapeHtml(evaluation.holdout_accuracy_percent)}%`}</strong></header><div class="evaluation-grid"><span>人工确认 <strong>${evaluation.confirmed_cases}/300</strong></span><span>程序候选 <strong>${evaluation.candidate_cases}</strong></span><span>真实作品 <strong>${evaluation.book_count}/5 · ${evaluation.books_below_minimum_cases} 本不足 20 条</strong></span><span>有效保留集 <strong>${evaluation.holdout_cases} · ${evaluation.holdout_share_percent}%</strong></span><span>待二次复核 <strong>${evaluation.second_review_pending}</strong></span><span>关键失败 <strong>${evaluation.critical_failures}</strong></span><span>证据逐字命中 <strong>${evaluation.quote_integrity_percent}%</strong></span><span>未解决冲突 <strong>${evaluation.unresolved_conflicts}</strong></span></div></section><div class="security-reminder"><strong>密钥轮换待办</strong><span>旧密钥曾出现在对话中。应用已经保证它们只在 Windows 加密存储中使用，但新密钥仍需在供应商账户后台生成后替换。</span></div><section class="control-section"><header><div><h3>反馈与验收闭环</h3><p>先保留原话，再明确系统理解和可直接检查的结果。</p></div></header><details class="control-form"><summary>登记新的反馈</summary><div class="control-form-grid"><label>你的原话<textarea id="collaboration-original" rows="3"></textarea></label><label>系统应当怎样理解<textarea id="collaboration-goal" rows="3"></textarea></label><label>验收条件，每行一条<textarea id="collaboration-acceptance" rows="4"></textarea></label><label>影响范围，每行一项<textarea id="collaboration-impact" rows="4"></textarea></label><label class="benchmark-critical"><input id="collaboration-confirm" type="checkbox"> 这项内容涉及目标、核心提示词、成本或发布，需要先确认</label><button id="collaboration-save" class="button button-primary" type="button">保存理解卡片</button></div></details><div class="collaboration-list">${feedback}</div></section><section class="control-section"><header><div><h3>完整提示词</h3><p>点击查看最终文本、分层来源、版本差异和单片段试跑。</p></div></header><div class="control-card-grid">${promptCards}</div>${promptDetailPanel()}<details class="prompt-history"><summary>查看全部提示词版本和回滚入口</summary><div class="version-list">${promptHistory}</div></details></section><section class="control-section two-column"><div><header><h3>阅读规则</h3><p>只能写分析方法，保存后自动进入最终提示词预览。</p></header><div class="inline-control-form"><textarea id="domain-rule-statement" rows="3" placeholder="请使用陈述句，例如：明确出现父母称谓时，应当检查对象能否唯一对应现有人物"></textarea><select id="domain-rule-task"><option value="all">全部任务</option><option value="extraction">片段抽取</option><option value="global_review">全书整理</option><option value="connectivity_audit">关系复审</option></select><button id="domain-rule-save" class="button button-primary" type="button">添加阅读规则</button></div><div class="rule-list">${rules}</div></div><div><header><h3>外部事实</h3><p>单独保存和标明来源，永远不成为小说原文证据。</p></header><div class="inline-control-form"><textarea id="external-fact-statement" rows="3" placeholder="作品外资料"></textarea><input id="external-fact-source" maxlength="300" placeholder="资料来源"><input id="external-fact-url" maxlength="1000" placeholder="来源地址，可不填"><button id="external-fact-save" class="button button-primary" type="button">保存外部资料</button></div><div class="rule-list">${facts}</div></div></section><section class="control-section"><header><div><h3>模型赛马与自动路由</h3><p>同一片段、同一提示词、同一金标准，关键案例失败就不能取得资格。</p></div><button id="model-race" class="button button-primary" type="button">运行一次真实单片段赛马</button></header><div class="route-grid">${routes}</div><div id="model-race-result" class="control-result"></div></section><section class="control-section"><header><h3>运行清单</h3><p>ChatGPT 登录通道不伪造单次美元费用。</p></header><div class="run-list">${runs}</div></section></div>`;
   bindCollaborationControls();
 }
 
@@ -3465,20 +3482,27 @@ function renderBenchmarkPanel() {
   const sourceOptions = state.overview.segments.map((segment) =>
     `<option value="${segment.ordinal}" ${Number(segment.ordinal) === Number(sourceSegment) ? "selected" : ""}>${escapeHtml(chapterForSegment(segment.ordinal))}</option>`
   ).join("");
-  const passed = state.benchmarks.filter((item) => item.passed === true).length;
-  const summary = state.benchmarks.length ? `${passed}/${state.benchmarks.length} 条通过` : "还没有人工登记的金标准";
-  const rows = state.benchmarks.length ? state.benchmarks.map((item) => {
-    const status = item.holdout ? "保留测试" : item.passed === true ? "通过" : item.passed === false ? "未通过" : "待复算";
+  const confirmedBenchmarks = state.benchmarks.filter((item) => item.confirmed_by_user && item.review_status !== "candidate");
+  const seededCandidates = state.benchmarks.filter((item) => item.review_status === "candidate");
+  const passed = confirmedBenchmarks.filter((item) => item.passed === true).length;
+  const summary = confirmedBenchmarks.length ? `${passed}/${confirmedBenchmarks.length} 条通过` : "可证明的人工确认目前为 0 条";
+  const rows = confirmedBenchmarks.length ? confirmedBenchmarks.map((item) => {
+    const status = item.review_status === "sealed_holdout" ? "密封保留" : item.passed === true ? "通过" : item.passed === false ? "未通过" : "待复算";
     const statusClass = item.passed === true ? "passed" : item.passed === false ? "failed" : "pending";
-    return `<article class="benchmark-case"><div><span class="benchmark-status ${statusClass}">${status}</span><strong>${escapeHtml(item.subject)}</strong><small>${escapeHtml(benchmarkTypeLabels[item.case_type] || item.case_type)} · ${escapeHtml(chapterForSegment(item.source_segment))}${item.critical ? " · 主体关键项" : " · 普通项"} · ${escapeHtml(item.suite_name || "book-gold")}${item.failure_category ? ` · ${escapeHtml(item.failure_category)}` : ""}</small><p>${escapeHtml(benchmarkExpectedText(item.case_type, item.expected))}</p><p class="benchmark-note">${item.holdout ? "答案在普通调试流程中保持隐藏" : `原文核对：${escapeHtml(item.note)}`}</p></div><div class="benchmark-actions"><button class="button button-quiet benchmark-source" data-segment="${item.source_segment}" type="button">查看原文</button>${item.holdout ? "" : `<button class="button button-quiet benchmark-edit" data-id="${item.id}" type="button">编辑</button>`}<button class="button button-danger benchmark-delete" data-id="${item.id}" type="button">删除</button></div></article>`;
+    const secondReview = item.second_review_status === "pending"
+      ? `<button class="button button-primary benchmark-second-review" data-id="${item.id}" type="button">完成二次复核</button>`
+      : item.second_review_status === "confirmed" ? '<span class="benchmark-review-complete">二次复核完成</span>' : "";
+    return `<article class="benchmark-case"><div><span class="benchmark-status ${statusClass}">${status}</span><strong>${escapeHtml(item.subject)}</strong><small>${escapeHtml(benchmarkTypeLabels[item.case_type] || item.case_type)} · ${escapeHtml(chapterForSegment(item.source_segment))}${item.critical ? " · 主体关键项" : " · 普通项"} · ${escapeHtml(item.suite_name || "book-gold")}${item.failure_category ? ` · ${escapeHtml(item.failure_category)}` : ""}</small><p>${escapeHtml(benchmarkExpectedText(item.case_type, item.expected))}</p><p class="benchmark-note">${item.review_status === "sealed_holdout" ? "答案已密封，普通接口不会返回" : `原文核对：${escapeHtml(item.note)}`}</p></div><div class="benchmark-actions"><button class="button button-quiet benchmark-source" data-segment="${item.source_segment}" type="button">查看原文</button>${item.review_status === "sealed_holdout" ? "" : `<button class="button button-quiet benchmark-edit" data-id="${item.id}" type="button">编辑</button>`}${secondReview}<button class="button button-danger benchmark-delete" data-id="${item.id}" type="button">删除</button></div></article>`;
   }).join("") : '<p class="benchmark-empty">独立人工核对后，在这里登记期望结论和原文章节。保存后立即本地复算，不调用模型。</p>';
-  const candidateRows = state.benchmarkCandidates.length ? state.benchmarkCandidates.map((item) => {
+  const indexedCandidateRows = state.benchmarkCandidates.map((item) => {
     const evidence = Array.isArray(item.evidence) ? item.evidence : [];
     const provenance = evidence.length
       ? `逐字证据 ${evidence.length} 条 · ${escapeHtml(evidence.map((entry) => entry.chapter_title).filter(Boolean).slice(0, 2).join("、"))}`
       : "本地检查候选 · 未附逐字引文";
     return `<article class="benchmark-case candidate"><div><span class="benchmark-status pending">待确认</span><strong>${escapeHtml(item.subject)}</strong><small>${escapeHtml(benchmarkTypeLabels[item.case_type] || item.case_type)} · ${escapeHtml(chapterForSegment(item.source_segment))}${item.critical ? " · 建议作为关键项" : " · 普通项"}</small><p>${escapeHtml(benchmarkExpectedText(item.case_type, item.expected))}</p><p class="benchmark-note">${provenance}</p><p class="benchmark-note">${escapeHtml(item.note)}</p></div><div class="benchmark-actions"><button class="button button-quiet benchmark-candidate-source" data-segment="${item.source_segment}" type="button">查看原文</button><button class="button button-primary benchmark-candidate-accept" data-id="${item.id}" type="button">确认并计入</button><button class="button button-danger benchmark-candidate-reject" data-id="${item.id}" type="button">不采用</button></div></article>`;
-  }).join("") : '<p class="benchmark-empty">还没有可复核候选。先完成至少一个带逐字证据的片段分析，再从已有证据生成候选。</p>';
+  }).join("");
+  const seededCandidateRows = seededCandidates.map((item) => `<article class="benchmark-case candidate"><div><span class="benchmark-status pending">程序预置候选</span><strong>${escapeHtml(item.subject)}</strong><small>${escapeHtml(benchmarkTypeLabels[item.case_type] || item.case_type)} · ${escapeHtml(chapterForSegment(item.source_segment))}${item.critical ? " · 建议作为关键项" : " · 普通项"}</small><p>${escapeHtml(benchmarkExpectedText(item.case_type, item.expected))}</p><p class="benchmark-note">尚未留下人工确认记录，因此不会计入准确率</p></div><div class="benchmark-actions"><button class="button button-quiet benchmark-source" data-segment="${item.source_segment}" type="button">查看原文</button><button class="button button-primary benchmark-edit" data-id="${item.id}" type="button">核对并确认</button></div></article>`).join("");
+  const candidateRows = indexedCandidateRows + seededCandidateRows || '<p class="benchmark-empty">还没有可复核候选。先完成至少一个带逐字证据的片段分析，再从已有证据生成候选。</p>';
   const candidatePanel = `<details class="benchmark-form"><summary>候选与人工确认</summary><div class="benchmark-head"><div><p>带引文的候选来自原文证据；本地检查候选会明确标识。点击确认后才成为金标准，拒绝不会影响小说数据。</p></div><button id="benchmark-candidate-refresh" class="button button-quiet" type="button">刷新候选和引文</button></div><div class="benchmark-list">${candidateRows}</div></details>`;
   return `<section class="benchmark-panel"><header class="benchmark-head"><div><h3>人工金标准</h3><p>用于验证真实书籍是否达到准确率门禁，${escapeHtml(summary)}，本地复算费用为 $0。</p></div><button id="benchmark-evaluate" class="button button-quiet" type="button">重新本地复算</button></header>${candidatePanel}<details class="benchmark-form" open><summary>${editing ? "编辑人工金标准" : "登记人工金标准"}</summary><div class="benchmark-form-grid"><label>核对类型<select id="benchmark-case-type">${Object.entries(benchmarkTypeLabels).map(([value, label]) => `<option value="${value}" ${value === caseType ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><label>核对说明<input id="benchmark-case-subject" maxlength="240" value="${escapeHtml(editing?.subject || "")}" placeholder="例如：孙悟空与齐天大圣是同一人物"></label><div id="benchmark-expected-fields" class="benchmark-expected-fields">${benchmarkExpectedFields(caseType, editing?.expected || {})}</div><label>原文章节<select id="benchmark-source-segment">${sourceOptions}</select></label><label>评估集名称<input id="benchmark-suite" maxlength="120" value="${escapeHtml(editing?.suite_name || "real-novel-gold")}" placeholder="例如：real-novel-gold"></label><label>错误类别<input id="benchmark-failure-category" maxlength="120" value="${escapeHtml(editing?.failure_category || "")}" placeholder="例如：亲属关系、时间倒叙或地点方位"></label><label class="benchmark-note-field">原文核对说明<textarea id="benchmark-note" maxlength="1000" rows="3" placeholder="说明你依据哪个原文事实作出判断">${escapeHtml(editing?.note || "")}</textarea></label><label class="benchmark-critical"><input id="benchmark-critical" type="checkbox" ${editing?.critical !== false ? "checked" : ""}> 这是主体关键项，失败时不能通过最终门禁</label><label class="benchmark-critical"><input id="benchmark-holdout" type="checkbox" ${editing?.holdout ? "checked" : ""}> 保存为保留测试，之后在普通调试页面隐藏答案</label><div class="benchmark-actions"><button id="benchmark-save" class="button button-primary" type="button">${editing ? "保存并重新核验" : "登记并本地核验"}</button>${editing ? '<button id="benchmark-cancel" class="button button-quiet" type="button">取消编辑</button>' : ""}</div></div></details><div class="benchmark-list">${rows}</div></section>`;
 }
@@ -3510,6 +3534,9 @@ async function saveBenchmarkCase() {
     failure_category: $("#benchmark-failure-category").value.trim(),
     holdout: $("#benchmark-holdout").checked,
     confirmed_by_user: true,
+    reviewer_id: "local-reviewer",
+    reviewer_role: "owner",
+    review_session: `ui-${Date.now()}`,
   };
   const button = $("#benchmark-save");
   button.disabled = true;
@@ -3590,6 +3617,27 @@ async function resolveBenchmarkCandidate(candidateId, action) {
   }
 }
 
+async function completeBenchmarkSecondReview(caseId) {
+  const values = await formAction({
+    title: "完成二次复核",
+    description: "请先打开原文，再确认案例答案和引用章节仍然一致",
+    submitLabel: "确认二次复核",
+    fields: [{ name: "note", label: "复核说明", type: "textarea", rows: 4, required: true }],
+  });
+  if (!values) return;
+  try {
+    await api(`/api/benchmarks/${caseId}/second-review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewer_id: "local-reviewer-pass-2", note: String(values.note || "").trim() }),
+    });
+    toast("二次复核已经记录，发布门禁已重新计算。");
+    await loadOverview(Number($("#progress-slider").value), true);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
 function bindBenchmarkPanel() {
   $("#benchmark-case-type")?.addEventListener("change", refreshBenchmarkExpectedFields);
   $("#benchmark-save")?.addEventListener("click", saveBenchmarkCase);
@@ -3617,6 +3665,9 @@ function bindBenchmarkPanel() {
   $$(".benchmark-candidate-reject").forEach((button) => button.addEventListener("click", () => {
     resolveBenchmarkCandidate(Number(button.dataset.id), "reject");
   }));
+  $$(".benchmark-second-review").forEach((button) => button.addEventListener("click", () => {
+    completeBenchmarkSecondReview(Number(button.dataset.id));
+  }));
   $$(".benchmark-delete").forEach((button) => button.addEventListener("click", async () => {
     if (!await confirmAction("删除人工金标准", "删除后会重新计算准确率门禁", "删除")) return;
     try {
@@ -3632,6 +3683,8 @@ function bindBenchmarkPanel() {
 
 function renderQuality() {
   const quality = state.overview.quality;
+  const atlasCoverage = state.mapLayout?.region_coverage || {};
+  const atlasIssues = state.mapLayout?.quality_issues || [];
   const cost = state.overview.cost_summary || {};
   const coverage = quality.evidence_coverage_percent === null ? "—" : `${quality.evidence_coverage_percent}%`;
   const costLabel = Number(cost.priced_job_count || 0) ? `$${Number(cost.estimated_cost_usd || 0).toFixed(6)}` : "暂无计价任务";
@@ -3640,7 +3693,11 @@ function renderQuality() {
     ? `只有 ${quality.benchmark_cases} 条人工金标准，至少需要 20 条`
     : `${quality.benchmark_passed}/${quality.benchmark_cases} 通过 · 主体错误 ${quality.critical_subject_failures}`;
   const metrics = `<div class="metric-grid quality-metrics"><article class="metric-card"><span>全书处理进度</span><strong>${quality.segments_processed}/${quality.segments_total}</strong><small>每个原文片段单独记账</small></article><article class="metric-card"><span>原文证据覆盖</span><strong>${coverage}</strong><small>${quality.facts_with_evidence}/${quality.facts_total} 条结构记录</small></article><article class="metric-card${quality.accuracy_gate_required && !quality.accuracy_gate_passed ? " warning" : ""}"><span>金标准准确率</span><strong>${escapeHtml(accuracy)}</strong><small>${escapeHtml(accuracyDetail)}</small></article><article class="metric-card"><span>累计分析费用</span><strong>${escapeHtml(costLabel)}</strong><small>${Number(cost.job_count || 0)} 次任务 · 输入 ${Number(cost.input_tokens || 0).toLocaleString()} · 输出 ${Number(cost.output_tokens || 0).toLocaleString()}</small></article><article class="metric-card"><span>供应商缓存命中</span><strong>${Number(cost.cache_hit_input_tokens || 0).toLocaleString()}</strong><small>另有完整请求本地复用，不产生调用</small></article><article class="metric-card${Number(quality.unresolved_merges || 0) > 0 ? " warning" : ""}"><span>证据不足的身份</span><strong>${quality.unresolved_merges}</strong><small>系统已避免自动合并，可选复核</small></article></div>`;
-  const issues = quality.issues.length ? `<div class="quality-list">${quality.issues.map((issue) => `<article class="quality-issue ${escapeHtml(issue.level)}"><strong>${escapeHtml(issue.title)}</strong><p>${escapeHtml(issue.detail)}</p></article>`).join("")}</div>` : emptyState("当前自动检查没有发现问题", "自动检查只能验证证据、重复和结构一致性，人物理解仍可通过原文证据人工核验。");
+  const reportIssues = [
+    ...quality.issues,
+    ...atlasIssues.map((issue) => ({ level: issue.severity || "warning", title: issue.issue_type === "unassigned_places" ? "地图存在待归区地点" : "地图区域需要重新整理", detail: issue.message })),
+  ];
+  const issues = reportIssues.length ? `<div class="quality-list">${reportIssues.map((issue) => `<article class="quality-issue ${escapeHtml(issue.level)}"><strong>${escapeHtml(issue.title)}</strong><p>${escapeHtml(issue.detail)}</p></article>`).join("")}</div>` : emptyState("当前自动检查没有发现问题", "自动检查只能验证证据、重复和结构一致性，人物理解仍可通过原文证据人工核验。");
   const jobs = state.overview.analysis_jobs || [];
   const jobHistory = jobs.length ? `<section class="cost-history"><h3>最近分析费用</h3><div class="table-wrap"><table class="data-table"><thead><tr><th>任务</th><th>模型</th><th>输入令牌</th><th>缓存命中</th><th>输出令牌</th><th>估算费用</th></tr></thead><tbody>${jobs.map((job) => `<tr><td>#${job.id} · ${escapeHtml(job.status)}</td><td>${escapeHtml(job.provider)} · ${escapeHtml(job.model)}</td><td>${Number(job.input_tokens || 0).toLocaleString()}</td><td>${Number(job.cache_hit_input_tokens || 0).toLocaleString()}</td><td>${Number(job.output_tokens || 0).toLocaleString()}</td><td><strong>${escapeHtml(formatCost(job))}</strong><small>${job.pricing_effective_date ? `价格日期 ${escapeHtml(job.pricing_effective_date)}` : escapeHtml(job.pricing_source || "价格未配置")}</small></td></tr>`).join("")}</tbody></table></div></section>` : "";
   const ledger = state.overview.cost_ledger || [];
@@ -3660,11 +3717,12 @@ function renderQuality() {
     auto_quarantined: "自动隔离", resolved_contextual: "不同情境", resolved_false_positive: "确认误报", quarantined: "人工隔离",
     auto_rejected: "自动舍弃约束",
   };
-  const modelReviewItems = unresolvedReviews.length + unresolvedLocations.length;
+  const modelReviewItems = unresolvedReviews.length + unresolvedLocations.length + atlasIssues.length;
   const resolvedHistory = resolvedConflictCount ? `<details class="conflict-history"><summary>查看 ${resolvedConflictCount} 条已处理记录</summary><div class="conflict-history-list">${resolvedIdentities.map((item) => `<article><div><strong>身份 · ${escapeHtml(item.left_name)} ↔ ${escapeHtml(item.right_name)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.reason)}</small></div>${["auto_separate", "rejected"].includes(item.status) ? `<div class="conflict-actions"><button class="button button-quiet merge-choice" data-keep="${item.left_entity_id}" data-remove="${item.right_entity_id}" type="button">改为合并到 ${escapeHtml(item.left_name)}</button><button class="button button-quiet merge-choice" data-keep="${item.right_entity_id}" data-remove="${item.left_entity_id}" type="button">改为合并到 ${escapeHtml(item.right_name)}</button></div>` : ""}</article>`).join("")}${resolvedContradictions.map((item) => `<article><div><strong>事实 · ${escapeHtml(item.left.label)} ↔ ${escapeHtml(item.right.label)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.summary)}</small></div><div class="conflict-actions"><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="contextual" type="button">改为不同情境</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="false_positive" type="button">改为误报</button><button class="button button-danger contradiction-action" data-id="${item.id}" data-action="quarantine" type="button">改为隔离</button></div></article>`).join("")}${resolvedTimeConstraints.map((item) => `<article><div><strong>时间 · ${escapeHtml(item.earlier_title)} → ${escapeHtml(item.later_title)}</strong><small>${escapeHtml(statusLabels[item.status] || item.status)} · ${escapeHtml(item.resolution_reason || item.reason)}</small></div><div class="conflict-actions"><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="reverse" type="button">改为反转</button><button class="button button-danger time-conflict-action" data-id="${item.id}" data-action="reject" type="button">改为舍弃</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="quarantine" type="button">改为隔离</button></div></article>`).join("")}</div></details>` : "";
   const conflictPanel = `<section class="conflict-center"><div class="conflict-center-head"><div><h3>冲突处理中心</h3><p>自动处理只使用本地规则，不调用模型、不删除原始事实。证据不足的身份保持分离，事实冲突进入隔离区，循环时间约束会被舍弃。</p></div>${autoConflictCount ? `<button id="quality-auto-close" class="button button-primary" type="button">免费自动处理 ${autoConflictCount} 项</button>` : '<span class="conflict-zero">当前无需处理</span>'}</div>${identityConflicts.length ? `<section class="conflict-group"><h4>身份候选 · ${identityConflicts.length}</h4><div class="conflict-card-list">${identityConflicts.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.left_name)} ↔ ${escapeHtml(item.right_name)}</strong><p>${escapeHtml(item.reason)} · 把握 ${Math.round(Number(item.confidence || 0) * 100)}%</p></div><div class="conflict-actions"><button class="button button-quiet merge-choice" data-keep="${item.left_entity_id}" data-remove="${item.right_entity_id}" type="button">合并为 ${escapeHtml(item.left_name)}</button><button class="button button-quiet merge-choice" data-keep="${item.right_entity_id}" data-remove="${item.left_entity_id}" type="button">合并为 ${escapeHtml(item.right_name)}</button><button class="button button-danger merge-reject" data-id="${item.id}" type="button">保持两个身份</button></div></article>`).join("")}</div></section>` : ""}${contradictions.length ? `<section class="conflict-group"><h4>事实冲突 · ${contradictions.length}</h4><div class="conflict-card-list">${contradictions.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.left.label)} ↔ ${escapeHtml(item.right.label)}</strong><p>${escapeHtml(item.summary)}</p><small>${escapeHtml(item.left.summary)} ｜ ${escapeHtml(item.right.summary)}</small></div><div class="conflict-actions"><button class="button button-quiet target-button" data-type="${escapeHtml(item.left.type)}" data-id="${item.left.id}" type="button">查看左侧</button><button class="button button-quiet target-button" data-type="${escapeHtml(item.right.type)}" data-id="${item.right.id}" type="button">查看右侧</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="contextual" type="button">属于不同情境</button><button class="button button-quiet contradiction-action" data-id="${item.id}" data-action="false_positive" type="button">确认误报</button><button class="button button-danger contradiction-action" data-id="${item.id}" data-action="quarantine" type="button">隔离待查</button></div></article>`).join("")}</div></section>` : ""}${timeConflicts.length ? `<section class="conflict-group"><h4>时间顺序冲突 · ${timeConflicts.length}</h4><div class="conflict-card-list">${timeConflicts.map((item) => `<article class="conflict-card"><div><strong>${escapeHtml(item.earlier_title)} → ${escapeHtml(item.later_title)}</strong><p>${escapeHtml(item.reason || "该约束会造成时间循环。")}</p></div><div class="conflict-actions"><button class="button button-quiet target-button" data-type="event" data-id="${item.earlier_event_id}" type="button">查看前项</button><button class="button button-quiet target-button" data-type="event" data-id="${item.later_event_id}" type="button">查看后项</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="reverse" type="button">反转顺序</button><button class="button button-danger time-conflict-action" data-id="${item.id}" data-action="reject" type="button">舍弃约束</button><button class="button button-quiet time-conflict-action" data-id="${item.id}" data-action="quarantine" type="button">隔离待查</button></div></article>`).join("")}</div></section>` : ""}${!autoConflictCount ? '<p class="conflict-complete">身份、事实和时间约束没有悬挂冲突。</p>' : ""}${resolvedHistory}</section>`;
-  const reviewPanel = `<section class="quality-resolution"><div><h3>关系与地图门禁</h3><p>${modelReviewItems ? `还有 ${modelReviewItems} 项需要模型复审或人工补证。调用模型前会继续使用任务预算。` : "关系与地图项目已经闭环，不需要额外模型调用。"}</p></div>${modelReviewItems ? '<button id="quality-retry" class="button button-quiet" type="button">调用模型复审，可能计费</button>' : ""}</section>${unresolvedReviews.length ? `<div class="connectivity-resolution-list">${unresolvedReviews.map((item) => `<article><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reason)} · 已扫描 ${item.scanned_segment_count} 个原文片段、${item.mention_count} 次提及</small></span><div><button class="button button-quiet target-button" data-type="entity" data-id="${item.entity_id}" type="button">查看人物</button><button class="button button-quiet connectivity-link" data-review="${item.id}" data-entity="${item.entity_id}" type="button">用原文补关系</button><button class="button button-danger connectivity-isolated" data-review="${item.id}" type="button">确认确实孤立</button></div></article>`).join("")}</div>` : ""}${unresolvedLocations.length ? `<div class="connectivity-resolution-list location-resolution-list">${unresolvedLocations.map((item) => `<article><span><strong>${escapeHtml(item.event_title)}</strong><small>${escapeHtml(item.reason)} · ${escapeHtml(chapterForSegment(item.event_first_segment))}</small></span><div><button class="button button-quiet target-button" data-type="event" data-id="${item.event_id}" type="button">查看剧情</button><button class="button button-primary location-link" data-event="${item.event_id}" type="button">用原文确认地点</button></div></article>`).join("")}</div>` : ""}`;
-  const topologyMetrics = `<div class="quality-topology"><span>关系已连接 <strong>${quality.connectivity_reviewed_connected}</strong></span><span>确认孤立 <strong>${quality.connectivity_confirmed_isolated}</strong></span><span>关系待处理 <strong>${Number(quality.connectivity_pending || 0) + Number(quality.connectivity_ambiguous || 0)}</strong></span><span>地点明确 <strong>${quality.location_explicit_events}</strong></span><span>位置沿用 <strong>${quality.location_inherited_events}</strong></span><span>位置未解 <strong>${quality.location_unresolved_events}</strong></span><span>有效位置覆盖 <strong>${quality.effective_location_coverage_percent ?? "—"}%</strong></span></div>`;
+  const atlasReview = atlasIssues.length ? `<div class="connectivity-resolution-list map-quality-resolution">${atlasIssues.map((item) => `<article><span><strong>${item.issue_type === "unassigned_places" ? "地点尚未归区" : "同级区域重叠"}</strong><small>${escapeHtml(item.message)}</small></span><div><button class="button button-primary quality-open-map" type="button">打开地图核对</button></div></article>`).join("")}</div>` : "";
+  const reviewPanel = `<section class="quality-resolution"><div><h3>关系与地图门禁</h3><p>${modelReviewItems ? `还有 ${modelReviewItems} 项需要模型复审或人工补证。调用模型前会继续使用任务预算。` : "关系与地图项目已经闭环，不需要额外模型调用。"}</p></div>${unresolvedReviews.length + unresolvedLocations.length ? '<button id="quality-retry" class="button button-quiet" type="button">调用模型复审，可能计费</button>' : ""}</section>${atlasReview}${unresolvedReviews.length ? `<div class="connectivity-resolution-list">${unresolvedReviews.map((item) => `<article><span><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.reason)} · 已扫描 ${item.scanned_segment_count} 个原文片段、${item.mention_count} 次提及</small></span><div><button class="button button-quiet target-button" data-type="entity" data-id="${item.entity_id}" type="button">查看人物</button><button class="button button-quiet connectivity-link" data-review="${item.id}" data-entity="${item.entity_id}" type="button">用原文补关系</button><button class="button button-danger connectivity-isolated" data-review="${item.id}" type="button">确认确实孤立</button></div></article>`).join("")}</div>` : ""}${unresolvedLocations.length ? `<div class="connectivity-resolution-list location-resolution-list">${unresolvedLocations.map((item) => `<article><span><strong>${escapeHtml(item.event_title)}</strong><small>${escapeHtml(item.reason)} · ${escapeHtml(chapterForSegment(item.event_first_segment))}</small></span><div><button class="button button-quiet target-button" data-type="event" data-id="${item.event_id}" type="button">查看剧情</button><button class="button button-primary location-link" data-event="${item.event_id}" type="button">用原文确认地点</button></div></article>`).join("")}</div>` : ""}`;
+  const topologyMetrics = `<div class="quality-topology"><span>关系已连接 <strong>${quality.connectivity_reviewed_connected}</strong></span><span>确认孤立 <strong>${quality.connectivity_confirmed_isolated}</strong></span><span>关系待处理 <strong>${Number(quality.connectivity_pending || 0) + Number(quality.connectivity_ambiguous || 0)}</strong></span><span>地点明确 <strong>${quality.location_explicit_events}</strong></span><span>位置沿用 <strong>${quality.location_inherited_events}</strong></span><span>位置未解 <strong>${quality.location_unresolved_events}</strong></span><span>区域覆盖 <strong>${Number(atlasCoverage.assigned_place_count || 0)}/${Number(atlasCoverage.total_place_count || 0)}</strong></span><span>语义区域 <strong>${Number(atlasCoverage.generated_region_count || 0)}</strong></span><span>最大重叠 <strong>${Number(atlasCoverage.overlap?.maximum_overlap_ratio_percent || 0)}%</strong></span></div>`;
   const benchmarkPanel = renderBenchmarkPanel();
   const releaseReady = Boolean(quality.accuracy_gate_passed) && Number(quality.unresolved_merges || 0) === 0 && modelReviewItems === 0 && autoConflictCount === 0;
   const blockedCount = Number(!quality.accuracy_gate_passed) + Number(quality.unresolved_merges || 0) + modelReviewItems + autoConflictCount;
@@ -3678,6 +3736,13 @@ function renderQuality() {
   }));
   $("#quality-auto-close")?.addEventListener("click", autoCloseConflicts);
   $("#quality-retry")?.addEventListener("click", retryQualityChecks);
+  $$(".quality-open-map").forEach((button) => button.addEventListener("click", () => {
+    state.view = "map";
+    state.mapPresentation = "atlas";
+    $(".nav-item.active")?.classList.remove("active");
+    $(".nav-item[data-view='map']")?.classList.add("active");
+    renderView();
+  }));
   $$(".connectivity-isolated").forEach((button) => button.addEventListener("click", () => confirmConnectivityIsolated(Number(button.dataset.review))));
   $$(".connectivity-link").forEach((button) => button.addEventListener("click", () => createManualConnectivityLink(Number(button.dataset.review), Number(button.dataset.entity))));
   $$(".location-link").forEach((button) => button.addEventListener("click", () => resolveManualEventLocation(Number(button.dataset.event))));

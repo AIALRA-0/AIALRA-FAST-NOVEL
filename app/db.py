@@ -1064,6 +1064,7 @@ def initialize(path: Path) -> None:
         _migrate_v27(connection)
         _migrate_v28(connection)
         _migrate_v29(connection)
+        _migrate_v291(connection)
         _repair_derived_self_routes(connection)
         _repair_mismatched_evidence_segments(connection)
         connection.execute(
@@ -1076,6 +1077,8 @@ def initialize(path: Path) -> None:
               AND (
                 SELECT COUNT(*) FROM quality_benchmark_cases benchmark
                 WHERE benchmark.book_id = analysis_jobs.book_id
+                  AND benchmark.confirmed_by_user = 1
+                  AND benchmark.review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
               ) < 20
             """
         )
@@ -1239,6 +1242,57 @@ def _migrate_v29(connection: sqlite3.Connection) -> None:
                 "INSERT OR IGNORE INTO feature_flags(book_id, feature_key, enabled) VALUES (?, ?, 1)",
                 (int(book["id"]), feature),
             )
+
+
+def _migrate_v291(connection: sqlite3.Connection) -> None:
+    """Add auditable benchmark review states without counting legacy seed data as human work."""
+
+    existing = {str(row[1]) for row in connection.execute("PRAGMA table_info(quality_benchmark_cases)")}
+    additions = (
+        "review_status TEXT NOT NULL DEFAULT 'candidate'",
+        "reviewer_id TEXT NOT NULL DEFAULT ''",
+        "reviewer_role TEXT NOT NULL DEFAULT ''",
+        "review_session TEXT NOT NULL DEFAULT ''",
+        "review_evidence_hash TEXT NOT NULL DEFAULT ''",
+        "reviewed_at TEXT",
+        "second_review_status TEXT NOT NULL DEFAULT 'not_required'",
+        "second_reviewer_id TEXT NOT NULL DEFAULT ''",
+        "second_reviewed_at TEXT",
+    )
+    for definition in additions:
+        column = definition.split()[0]
+        if column not in existing:
+            connection.execute(f"ALTER TABLE quality_benchmark_cases ADD COLUMN {definition}")
+
+    # These cases were inserted by code in earlier releases. Preserve them as useful
+    # candidates while removing the unsupported claim that a person confirmed them.
+    connection.execute(
+        """
+        UPDATE quality_benchmark_cases
+        SET origin = 'agent_seeded_candidate', holdout = 0, confirmed_by_user = 0,
+            review_status = 'candidate', reviewer_id = '', reviewer_role = '',
+            review_session = '', review_evidence_hash = '', reviewed_at = NULL,
+            second_review_status = 'not_required', second_reviewer_id = '',
+            second_reviewed_at = NULL,
+            note = '系统根据《西游记》固定题库准备的待人工核对候选'
+        WHERE failure_category = 'xiyouji-core'
+          AND subject IN (
+              '玄奘=陈玄奘', '玄奘=唐僧', '石猴=孙悟空', '猪八戒=猪悟能',
+              '沙僧=沙悟净', '孙悟空≠唐僧', '孙悟空≠猪八戒', '唐僧≠猪八戒',
+              '观音菩萨≠如来佛祖', '牛魔王≠红孩儿', '石猴出世', '大闹天宫',
+              '揭帖救出孙悟空', '白骨精第一次变化', '红孩儿三昧真火', '扇熄火焰山',
+              '石猴出世早于大闹天宫', '大闹天宫早于压五行山', '压五行山早于揭帖',
+              '揭帖早于白骨精', '白骨精早于红孩儿', '红孩儿早于火焰山',
+              '火焰山早于传播真经', '主线人物包含孙悟空', '主线行程从开篇开始',
+              '全书片段无缺漏', '正式事实全部有证据', '证据逐字存在于原文'
+          )
+        """
+    )
+    for book in connection.execute("SELECT id FROM books"):
+        connection.execute(
+            "INSERT OR IGNORE INTO feature_flags(book_id, feature_key, enabled) VALUES (?, 'trusted_eval_v1', 1)",
+            (int(book["id"]),),
+        )
 
 
 def _repair_derived_self_routes(connection: sqlite3.Connection) -> None:

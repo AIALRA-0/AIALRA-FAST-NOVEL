@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 import app.providers as providers
-from app.db import transaction
+from app.benchmarks import evaluation_progress, seed_benchmark_cases
+from app.db import initialize, transaction
 
 
 def client_for(tmp_path: Path) -> TestClient:
@@ -146,6 +147,59 @@ def test_release_gate_discloses_missing_scale_without_claiming_ninety_five_perce
         assert body["remaining_cases"] > 0
 
 
+def test_program_seeded_cases_remain_candidates_until_a_human_reviews_them(tmp_path: Path) -> None:
+    """程序预置题不得再次变成人工金标准或伪保留案例。"""
+
+    with client_for(tmp_path) as client:
+        book_id = demo_book(client)["id"]
+        with transaction(main.settings.database_path) as connection:
+            connection.execute("UPDATE books SET title = '西游记' WHERE id = ?", (book_id,))
+            assert seed_benchmark_cases(connection, book_id) == 28
+            connection.execute(
+                """
+                UPDATE quality_benchmark_cases
+                SET confirmed_by_user = 1, holdout = 1, origin = 'manual',
+                    review_status = 'sealed_holdout'
+                WHERE book_id = ?
+                """,
+                (book_id,),
+            )
+        initialize(main.settings.database_path)
+        with transaction(main.settings.database_path) as connection:
+            progress = evaluation_progress(connection)
+            seeded = connection.execute(
+                """
+                SELECT COUNT(*) AS total,
+                    SUM(CASE WHEN review_status = 'candidate' THEN 1 ELSE 0 END) AS candidates,
+                    SUM(confirmed_by_user) AS confirmed,
+                    SUM(holdout) AS holdouts
+                FROM quality_benchmark_cases WHERE book_id = ?
+                """,
+                (book_id,),
+            ).fetchone()
+        assert int(seeded["total"]) == 28
+        assert int(seeded["candidates"]) == 28
+        assert int(seeded["confirmed"] or 0) == 0
+        assert int(seeded["holdouts"] or 0) == 0
+        assert progress["confirmed_cases"] == 0
+        assert progress["holdout_cases"] == 0
+        assert progress["candidate_cases"] == 28
+
+
+def test_formal_corpus_declares_three_classics_and_two_authorized_modern_slots(tmp_path: Path) -> None:
+    """质量范围必须公开区分古典作品和等待授权的现代作品。"""
+
+    with client_for(tmp_path) as client:
+        response = client.get("/api/eval-suites/corpus")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["case_policy"]["total_cases"] == 300
+        assert body["case_policy"]["total_sealed_holdout_cases"] == 60
+        assert len(body["works"]) == 5
+        assert sum(item["authorization_state"] == "available" for item in body["works"]) == 3
+        assert sum(item["authorization_state"] == "waiting_for_authorized_work" for item in body["works"]) == 2
+
+
 def test_holdout_answer_is_hidden_from_normal_benchmark_listing(tmp_path: Path) -> None:
     """保留测试参与门禁，但提示词调试页面看不到答案和当前结果。"""
 
@@ -160,6 +214,8 @@ def test_holdout_answer_is_hidden_from_normal_benchmark_listing(tmp_path: Path) 
                 "source_segment": 0,
                 "note": "只用于正式评估门禁",
                 "holdout": True,
+                "confirmed_by_user": True,
+                "reviewer_id": "test-reviewer",
             },
         )
         assert created.status_code == 201
@@ -168,6 +224,21 @@ def test_holdout_answer_is_hidden_from_normal_benchmark_listing(tmp_path: Path) 
         assert hidden["expected"] == {"withheld": True}
         assert hidden["actual"] == {"withheld": True}
         assert hidden["passed"] is None
+        explicitly_requested = client.get(
+            f"/api/books/{book_id}/benchmarks", params={"reveal_holdout": True}
+        ).json()
+        assert next(item for item in explicitly_requested if item["id"] == created.json()["id"])["expected"] == {"withheld": True}
+        before_second_review = client.get("/api/eval-suites/release-gate").json()
+        assert before_second_review["holdout_cases"] == 0
+        assert before_second_review["second_review_pending"] == 1
+        reviewed = client.post(
+            f"/api/benchmarks/{created.json()['id']}/second-review",
+            json={"reviewer_id": "test-reviewer-pass-2", "note": "再次核对原文和答案一致"},
+        )
+        assert reviewed.status_code == 200
+        after_second_review = client.get("/api/eval-suites/release-gate").json()
+        assert after_second_review["holdout_cases"] == 1
+        assert after_second_review["second_review_pending"] == 0
 
 
 def test_evidence_candidates_require_human_confirmation_before_counting(tmp_path: Path) -> None:
@@ -275,6 +346,8 @@ def test_release_gate_ignores_conflicts_from_books_outside_confirmed_eval_scope(
                 "expected": {"percent": 100},
                 "source_segment": 0,
                 "note": "用于验证发布门禁的作品范围",
+                "confirmed_by_user": True,
+                "reviewer_id": "test-reviewer",
             },
         )
         assert created.status_code == 201

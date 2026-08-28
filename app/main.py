@@ -68,6 +68,7 @@ from app.models import (
     BenchmarkCandidateResolve,
     BenchmarkCaseCreate,
     BenchmarkCasePatch,
+    BenchmarkSecondReview,
     CollaborationItemCreate,
     CollaborationItemPatch,
     AnalysisJobAction,
@@ -192,7 +193,7 @@ async def lifespan(_: FastAPI):
         job_manager = None
 
 
-app = FastAPI(title="小说证据图谱", version="2.9.0-rc.1", lifespan=lifespan)
+app = FastAPI(title="小说证据图谱", version="2.9.1-rc.1", lifespan=lifespan)
 
 
 def rows(items: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -281,12 +282,50 @@ def _benchmark_case_payload(row: sqlite3.Row, *, reveal_holdout: bool = True) ->
     item["critical"] = bool(item["critical"])
     item["holdout"] = bool(item.get("holdout", 0))
     item["confirmed_by_user"] = bool(item.get("confirmed_by_user", 1))
-    if item["holdout"] and not reveal_holdout:
+    item["review_status"] = str(item.get("review_status") or "candidate")
+    item["second_review_status"] = str(item.get("second_review_status") or "not_required")
+    if item["review_status"] == "sealed_holdout" and not reveal_holdout:
         item["expected"] = {"withheld": True}
         item["actual"] = {"withheld": True}
         item["passed"] = None
         item["note"] = "保留测试答案已隐藏，只在正式门禁中计算。"
     return item
+
+
+def _benchmark_review_audit(
+    connection: sqlite3.Connection,
+    book_id: int,
+    source_segment: int,
+    expected: dict[str, Any],
+    *,
+    confirmed: bool,
+    holdout: bool,
+    critical: bool,
+    reviewer_id: str,
+    reviewer_role: str,
+    review_session: str,
+) -> dict[str, Any]:
+    """Build review provenance from the exact source text shown to the reviewer."""
+
+    segment = connection.execute(
+        "SELECT text FROM segments WHERE book_id = ? AND ordinal = ?",
+        (book_id, source_segment),
+    ).fetchone()
+    evidence_hash = stable_hash(
+        str(book_id), str(source_segment), str(segment["text"] if segment is not None else ""),
+        json.dumps(expected, ensure_ascii=False, sort_keys=True),
+    )
+    status = "candidate"
+    if confirmed:
+        status = "sealed_holdout" if holdout else "confirmed_development"
+    return {
+        "review_status": status,
+        "reviewer_id": reviewer_id.strip() if confirmed else "",
+        "reviewer_role": reviewer_role.strip() if confirmed else "",
+        "review_session": review_session.strip() if confirmed else "",
+        "review_evidence_hash": evidence_hash if confirmed else "",
+        "second_review_status": "pending" if confirmed and (critical or holdout) else "not_required",
+    }
 
 
 def _list_benchmark_cases(
@@ -804,11 +843,11 @@ def list_benchmark_cases(
     book_id: int,
     reveal_holdout: bool = Query(default=False),
 ) -> list[dict[str, Any]]:
-    """返回人工金标准、引用章节和本地复算结果。"""
+    """Return review records while keeping sealed answers out of ordinary APIs."""
 
     with connect(settings.database_path) as connection:
         ensure_book(connection, book_id)
-        return _list_benchmark_cases(connection, book_id, reveal_holdout=reveal_holdout)
+        return _list_benchmark_cases(connection, book_id, reveal_holdout=False)
 
 
 @app.get("/api/books/{book_id}/benchmark-candidates")
@@ -880,6 +919,13 @@ def resolve_benchmark_candidate(
             json.loads(str(candidate["expected_json"])),
             int(book["segment_count"]),
         )
+        critical = bool(candidate["critical"]) if request.critical is None else request.critical
+        audit = _benchmark_review_audit(
+            connection, int(candidate["book_id"]), int(candidate["source_segment"]), expected,
+            confirmed=True, holdout=request.holdout, critical=critical,
+            reviewer_id=request.reviewer_id, reviewer_role=request.reviewer_role,
+            review_session=request.review_session,
+        )
         duplicate = connection.execute(
             """
             SELECT id FROM quality_benchmark_cases
@@ -895,19 +941,43 @@ def resolve_benchmark_candidate(
                 """
                 INSERT INTO quality_benchmark_cases(
                     book_id, case_type, subject, expected_json, source_segment, note, critical,
-                    suite_name, origin, holdout, confirmed_by_user, failure_category
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'real-novel-gold', 'manual', ?, 1, 'candidate-review')
+                    suite_name, origin, holdout, confirmed_by_user, failure_category,
+                    review_status, reviewer_id, reviewer_role, review_session,
+                    review_evidence_hash, reviewed_at, second_review_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'real-novel-gold', 'manual', ?, 1,
+                    'candidate-review', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
                 """,
                 (
                     candidate["book_id"], candidate["case_type"], candidate["subject"],
                     json.dumps(expected, ensure_ascii=False), candidate["source_segment"],
                     request.note.strip() or str(candidate["note"]),
-                    int(bool(candidate["critical"]) if request.critical is None else request.critical),
+                    int(critical),
                     int(request.holdout),
+                    audit["review_status"], audit["reviewer_id"], audit["reviewer_role"],
+                    audit["review_session"], audit["review_evidence_hash"],
+                    audit["second_review_status"],
                 ),
             ).lastrowid)
         else:
             benchmark_id = int(duplicate["id"])
+            connection.execute(
+                """
+                UPDATE quality_benchmark_cases
+                SET expected_json = ?, note = ?, critical = ?, holdout = ?, confirmed_by_user = 1,
+                    origin = 'manual', review_status = ?, reviewer_id = ?, reviewer_role = ?,
+                    review_session = ?, review_evidence_hash = ?, reviewed_at = CURRENT_TIMESTAMP,
+                    second_review_status = ?, second_reviewer_id = '', second_reviewed_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    json.dumps(expected, ensure_ascii=False),
+                    request.note.strip() or str(candidate["note"]), int(critical), int(request.holdout),
+                    audit["review_status"], audit["reviewer_id"], audit["reviewer_role"],
+                    audit["review_session"], audit["review_evidence_hash"],
+                    audit["second_review_status"], benchmark_id,
+                ),
+            )
         connection.execute(
             """
             UPDATE benchmark_candidates SET status = 'accepted', accepted_benchmark_id = ?,
@@ -929,7 +999,7 @@ def resolve_benchmark_candidate(
             """,
             (benchmark_id,),
         ).fetchone()
-    return {"candidate": candidate_payload(updated), "benchmark": _benchmark_case_payload(benchmark)}
+    return {"candidate": candidate_payload(updated), "benchmark": _benchmark_case_payload(benchmark, reveal_holdout=False)}
 
 
 @app.post("/api/books/{book_id}/benchmarks", status_code=201)
@@ -951,19 +1021,30 @@ def create_benchmark_case(book_id: int, request: BenchmarkCaseCreate) -> dict[st
         ).fetchone()
         if duplicate is not None:
             raise HTTPException(status_code=409, detail="同一章节已经存在同名同类型金标准。")
+        audit = _benchmark_review_audit(
+            connection, book_id, request.source_segment, expected,
+            confirmed=request.confirmed_by_user, holdout=request.holdout,
+            critical=request.critical, reviewer_id=request.reviewer_id or "local-reviewer",
+            reviewer_role=request.reviewer_role, review_session=request.review_session,
+        )
         case_id = int(connection.execute(
             """
             INSERT INTO quality_benchmark_cases(
                 book_id, case_type, subject, expected_json, source_segment, note, critical,
-                suite_name, origin, holdout, confirmed_by_user, failure_category
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                suite_name, origin, holdout, confirmed_by_user, failure_category,
+                review_status, reviewer_id, reviewer_role, review_session,
+                review_evidence_hash, reviewed_at, second_review_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, ?)
             """,
             (
                 book_id, request.case_type, request.subject.strip(),
                 json.dumps(expected, ensure_ascii=False), request.source_segment,
                 request.note.strip(), int(request.critical), request.suite_name.strip(),
                 request.origin, int(request.holdout), int(request.confirmed_by_user),
-                request.failure_category.strip(),
+                request.failure_category.strip(), audit["review_status"], audit["reviewer_id"],
+                audit["reviewer_role"], audit["review_session"], audit["review_evidence_hash"],
+                int(request.confirmed_by_user), audit["second_review_status"],
             ),
         ).lastrowid)
         evaluate_benchmarks(connection, book_id)
@@ -977,7 +1058,7 @@ def create_benchmark_case(book_id: int, request: BenchmarkCaseCreate) -> dict[st
             """,
             (case_id,),
         ).fetchone()
-    return _benchmark_case_payload(row)
+    return _benchmark_case_payload(row, reveal_holdout=False)
 
 
 @app.patch("/api/benchmarks/{case_id}")
@@ -1010,6 +1091,15 @@ def patch_benchmark_case(case_id: int, request: BenchmarkCasePatch) -> dict[str,
         holdout = request.holdout if request.holdout is not None else bool(existing["holdout"])
         confirmed_by_user = request.confirmed_by_user if request.confirmed_by_user is not None else bool(existing["confirmed_by_user"])
         failure_category = request.failure_category.strip() if request.failure_category is not None else str(existing["failure_category"])
+        reviewer_id = request.reviewer_id if request.reviewer_id is not None else str(existing["reviewer_id"] or "local-reviewer")
+        reviewer_role = request.reviewer_role if request.reviewer_role is not None else str(existing["reviewer_role"] or "owner")
+        review_session = request.review_session if request.review_session is not None else str(existing["review_session"] or "")
+        audit = _benchmark_review_audit(
+            connection, int(existing["book_id"]), source_segment, expected,
+            confirmed=confirmed_by_user, holdout=holdout, critical=critical,
+            reviewer_id=reviewer_id, reviewer_role=reviewer_role,
+            review_session=review_session,
+        )
         duplicate = connection.execute(
             """
             SELECT id FROM quality_benchmark_cases
@@ -1024,13 +1114,19 @@ def patch_benchmark_case(case_id: int, request: BenchmarkCasePatch) -> dict[str,
             UPDATE quality_benchmark_cases
             SET case_type = ?, subject = ?, expected_json = ?, source_segment = ?, note = ?,
                 critical = ?, suite_name = ?, origin = ?, holdout = ?, confirmed_by_user = ?,
-                failure_category = ?, updated_at = CURRENT_TIMESTAMP
+                failure_category = ?, review_status = ?, reviewer_id = ?, reviewer_role = ?,
+                review_session = ?, review_evidence_hash = ?,
+                reviewed_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
+                second_review_status = ?, second_reviewer_id = '', second_reviewed_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
             (
                 case_type, subject, json.dumps(expected, ensure_ascii=False), source_segment,
                 note, int(critical), suite_name, origin, int(holdout), int(confirmed_by_user),
-                failure_category, case_id,
+                failure_category, audit["review_status"], audit["reviewer_id"],
+                audit["reviewer_role"], audit["review_session"], audit["review_evidence_hash"],
+                int(confirmed_by_user), audit["second_review_status"], case_id,
             ),
         )
         evaluate_benchmarks(connection, int(existing["book_id"]))
@@ -1044,7 +1140,7 @@ def patch_benchmark_case(case_id: int, request: BenchmarkCasePatch) -> dict[str,
             """,
             (case_id,),
         ).fetchone()
-    return _benchmark_case_payload(row)
+    return _benchmark_case_payload(row, reveal_holdout=False)
 
 
 @app.delete("/api/benchmarks/{case_id}", status_code=204)
@@ -1060,6 +1156,44 @@ def delete_benchmark_case(case_id: int) -> Response:
         connection.execute("DELETE FROM quality_benchmark_cases WHERE id = ?", (case_id,))
         evaluate_benchmarks(connection, int(existing["book_id"]))
     return Response(status_code=204)
+
+
+@app.post("/api/benchmarks/{case_id}/second-review")
+def second_review_benchmark_case(case_id: int, request: BenchmarkSecondReview) -> dict[str, Any]:
+    """Complete the required second pass for critical and sealed benchmark cases."""
+
+    with transaction(settings.database_path) as connection:
+        existing = connection.execute(
+            "SELECT * FROM quality_benchmark_cases WHERE id = ?", (case_id,)
+        ).fetchone()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="找不到这条人工金标准。")
+        if not bool(existing["confirmed_by_user"]) or str(existing["review_status"]) == "candidate":
+            raise HTTPException(status_code=409, detail="候选案例必须先完成首次人工确认。")
+        if not bool(existing["critical"]) and str(existing["review_status"]) != "sealed_holdout":
+            raise HTTPException(status_code=409, detail="这条普通开发案例不需要二次复核。")
+        connection.execute(
+            """
+            UPDATE quality_benchmark_cases
+            SET second_review_status = 'confirmed', second_reviewer_id = ?,
+                second_reviewed_at = CURRENT_TIMESTAMP,
+                note = note || ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (request.reviewer_id.strip(), f"\n二次复核：{request.note.strip()}", case_id),
+        )
+        evaluate_benchmarks(connection, int(existing["book_id"]))
+        row = connection.execute(
+            """
+            SELECT benchmark.*, segment.chapter_title AS source_chapter_title
+            FROM quality_benchmark_cases benchmark
+            LEFT JOIN segments segment
+              ON segment.book_id = benchmark.book_id AND segment.ordinal = benchmark.source_segment
+            WHERE benchmark.id = ?
+            """,
+            (case_id,),
+        ).fetchone()
+    return _benchmark_case_payload(row, reveal_holdout=False)
 
 
 @app.post("/api/books/{book_id}/benchmarks/evaluate")
@@ -1296,7 +1430,10 @@ def collaboration_to_regression(item_id: int, request: BenchmarkCaseCreate) -> d
     with transaction(settings.database_path) as connection:
         connection.execute(
             """
-            UPDATE quality_benchmark_cases SET origin = 'user_correction', confirmed_by_user = 1
+            UPDATE quality_benchmark_cases
+            SET origin = 'user_correction', confirmed_by_user = 1,
+                review_status = 'adjudicated', reviewer_role = 'owner',
+                reviewed_at = COALESCE(reviewed_at, CURRENT_TIMESTAMP)
             WHERE id = ?
             """,
             (benchmark["id"],),
@@ -1871,6 +2008,20 @@ def release_gate() -> dict[str, Any]:
         return evaluation_progress(connection)
 
 
+@app.get("/api/eval-suites/corpus")
+def evaluation_corpus() -> dict[str, Any]:
+    """Return the declared quality corpus without exposing any case answers."""
+
+    manifest_path = ROOT / "evals" / "quality_corpus_manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=503, detail="正式质量语料清单尚未随当前版本提供")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=503, detail="正式质量语料清单无法读取") from exc
+    return payload
+
+
 @app.get("/api/eval-suites")
 def list_eval_suites() -> dict[str, Any]:
     """按评估集汇总案例规模、保留集比例和结果，不公开保留集答案。"""
@@ -1881,10 +2032,12 @@ def list_eval_suites() -> dict[str, Any]:
             """
             SELECT suite_name, COUNT(*) AS confirmed_cases,
                 COUNT(DISTINCT book_id) AS book_count,
-                SUM(CASE WHEN holdout = 1 THEN 1 ELSE 0 END) AS holdout_cases,
+                SUM(CASE WHEN review_status = 'sealed_holdout'
+                    AND second_review_status = 'confirmed' THEN 1 ELSE 0 END) AS holdout_cases,
                 SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) AS passed_cases,
                 SUM(CASE WHEN critical = 1 AND COALESCE(passed, 0) != 1 THEN 1 ELSE 0 END) AS critical_failures
             FROM quality_benchmark_cases WHERE confirmed_by_user = 1
+              AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
             GROUP BY suite_name ORDER BY suite_name
             """
         ).fetchall())
@@ -4528,7 +4681,7 @@ def patch_ui_issue(issue_id: int, request: UiIssuePatch) -> dict[str, Any]:
 def health() -> dict[str, str]:
     """供本机容器与反向代理检查进程状态，不返回书库或模型信息。"""
 
-    return {"status": "ok", "version": "2.9.0-rc.1"}
+    return {"status": "ok", "version": "2.9.1-rc.1"}
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -4537,7 +4690,7 @@ def ready() -> dict[str, str]:
 
     with connect(settings.database_path) as connection:
         connection.execute("SELECT 1").fetchone()
-    return {"status": "ready", "version": "2.9.0-rc.1"}
+    return {"status": "ready", "version": "2.9.1-rc.1"}
 
 
 @app.get("/")

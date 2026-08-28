@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite_id": "mixed-five-work-quality-v1",
+  "purpose": "正式内容质量评测，不用于书库导入或界面冒烟测试",
+  "case_policy": {
+    "cases_per_work": 60,
+    "development_cases_per_work": 48,
+    "sealed_holdout_cases_per_work": 12,
+    "total_cases": 300,
+    "total_sealed_holdout_cases": 60,
+    "human_confirmation_required": true,
+    "second_review_required_for": ["critical", "sealed_holdout"]
+  },
+  "works": [
+    {
+      "slot": "classic-journey",
+      "title": "西游记",
+      "work_type": "中国古典长篇",
+      "source_policy": "public_domain_local_copy",
+      "authorization_state": "available",
+      "focus": ["主线行程", "地域包含", "时间顺序", "身份与别名"]
+    },
+    {
+      "slot": "classic-family",
+      "title": "红楼梦",
+      "work_type": "中国古典长篇",
+      "source_policy": "public_domain_local_copy",
+      "authorization_state": "available",
+      "focus": ["家族关系", "称谓反向语义", "密集人物", "并行叙事"]
+    },
+    {
+      "slot": "classic-multiline",
+      "title": "三国演义",
+      "work_type": "中国古典长篇",
+      "source_policy": "public_domain_local_copy",
+      "authorization_state": "available",
+      "focus": ["联盟与敌对", "主从变化", "多线行程", "势力层级"]
+    },
+    {
+      "slot": "modern-fantasy",
+      "title": null,
+      "work_type": "现代玄幻长篇",
+      "source_policy": "user_authorized_local_copy_only",
+      "authorization_state": "waiting_for_authorized_work",
+      "focus": ["力量体系", "等级变化", "跨卷记忆", "物品与技能"]
+    },
+    {
+      "slot": "modern-urban-or-translated",
+      "title": null,
+      "work_type": "现代都市或翻译长篇",
+      "source_policy": "user_authorized_local_copy_only",
+      "authorization_state": "waiting_for_authorized_work",
+      "focus": ["现代场景", "隐含关系", "非结构化叙事", "语言风格差异"]
+    }
+  ],
+  "claim_boundary": {
+    "before_all_slots_authorized": "只能报告古典小说覆盖率",
+    "before_300_human_confirmed": "不得显示达到95%正式质量门",
+    "browser_acceptance": "只证明部署与交互，不证明小说分析准确率"
+  }
+}

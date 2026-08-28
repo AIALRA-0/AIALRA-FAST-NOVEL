@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "product": "小说证据图谱",
-  "release": "2.9.0-rc.1",
-  "status": "release_candidate_blocked_by_gold_evaluation_gate",
-  "source_commit": "b472d24",
-  "active_objective": "交付统一选择器、防剧透输入、费用预测 2.0、多级二维地图、导览式三维图集、质量工作台、体系图谱和剧情知识胶囊，并发布 2.9.0 候选版",
+  "release": "2.9.1-rc.1",
+  "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
+  "source_commit": "working-tree-2.9.1-rc.1",
+  "active_objective": "交付地图控制栏防重叠、全部区域可见、可信金标准状态和混合五书评测范围",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -14,34 +14,29 @@
     "public_data_policy": "只允许空库或合成演示数据"
   },
   "quality_gate": {
-    "unit_tests": "passed:121; skipped:1-environment-dependent; collected:122",
+    "unit_tests": "passed:124;skipped:1-environment-dependent;collected:125",
     "javascript_syntax": "passed",
-    "browser_console_errors": "passed:6-synthetic-flows;2-real-xiyouji-flows;1-five-book-library-flow",
+    "browser_flows": "passed:7;skipped:3-specialized-long-form-environment",
+    "responsive_map_controls": "passed:5-viewports-by-4-effective-zoom-levels;20-bounding-box-checks",
+    "map_region_visibility": "passed:large-demo-4-generated-4-visible-2d-3d",
     "map_step_parity": "passed:shared-StoryMapStep-2d-3d-chronology",
-    "rapid_navigation": "passed:rapid-story-context-reads-no-longer-lock-database",
-    "responsive_layout": "passed:720px-keyboard-and-touch-controls",
-    "real_corpus_import": "passed:5-books;1011-segments;3283083-characters",
-    "real_long_form": "passed:xiyouji-203-segments;1049-steps;157-places;45-regions;direct-threejs-region-meshes;40-bidirectional-relations",
-    "gold_evaluation": "blocked:28-confirmed-of-300;2-holdout;1-evaluated-book-of-5",
-    "cost_estimate": "v2-implemented:rendered-input-cache-exclusion-task_breakdown-median-conservative-confidence-backtest;historical-50-segment-run:estimated-0.85907-actual-0.2940147;v2-live-25-percent-target-pending-more-paid-samples",
-    "windows_package": "passed:2.9.0-rc.1-readyz-and-candidate-page;sha256-cc6a369394d9d67699b858883f9ab6f143fd8122c4cfadc584260833c6a5d8ce",
-    "safe_publish": "passed:2.9.0-rc.1;531-reviewed;0-block;0-review;0-coverage-gap",
-    "github_ci": "passed:33202079240",
-    "vps_container": "passed:2.9.0-rc.1-ready;readonly;nonroot;localhost-only;database-integrity-ok;rollback-backup-retained",
-    "auth_gateway_route": "passed:public-dns;cloudflare-tls;anonymous-302-to-authentik",
-    "public_authentication": "partial:anonymous-gateway-passed;authenticated-browser-return-not-verified;chat-exposed-cloudflare-token-still-requires-owner-revocation"
+    "real_corpus_import": "passed:5-public-domain-books;1011-segments;3283083-characters",
+    "benchmark_migration": "passed:28-machine-candidates;0-provable-human-confirmed;0-valid-sealed-holdouts",
+    "formal_quality_corpus": "defined:3-classics;2-user-authorized-modern-slots;300-total;60-sealed-holdouts",
+    "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60;2-modern-slots-await-authorization",
+    "safe_publish": "pending:2.9.1-rc.1",
+    "github_ci": "pending:2.9.1-rc.1",
+    "vps_container": "pending:2.9.1-rc.1",
+    "public_authentication": "partial:2.9.0-anonymous-gateway-passed;2.9.1-authenticated-browser-acceptance-pending"
   },
   "publication": {
     "github": "public-repository",
-    "github_commit": "d89b15ef2ec776e12ed1f22a667916f23da2a28b",
-    "github_release": "v2.9.0-rc.1-prerelease",
-    "deployment": "vps-container-2.9.0-rc.1-ready",
+    "github_commit": "pending-2.9.1-rc.1",
+    "github_release": "pending-v2.9.1-rc.1-prerelease",
+    "deployment": "current-vps-remains-2.9.0-rc.1-until-2.9.1-gates-pass",
     "hostname": "novel.aialra.online",
-    "dns": "passed:cloudflare-proxied-a-records",
-    "tls_certificate": "passed:https-and-hsts",
-    "authentication": "Authentik gateway passed anonymous redirect; authenticated browser return remains a manual acceptance item",
-    "rollback": "2.7.0 image and pre-2.9 SQLite backup retained",
-    "windows_asset": "local-only:binary archive not attached because nested dependency scan did not pass"
+    "authentication": "Authentik gateway",
+    "rollback": "2.9.0-rc.1 and 2.7.0 deployment points retained"
   },
   "last_updated": "2026-08-28"
 }

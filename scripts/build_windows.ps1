@@ -27,7 +27,7 @@ if (-not $versionMatch.Success) {
 $release = $versionMatch.Groups[1].Value
 $distRoot = Join-Path $projectRoot "dist-v$release"
 $workRoot = Join-Path $projectRoot "build-v$release"
-& $buildPython -m PyInstaller --noconfirm --clean --onedir --windowed --name "NovelAtlasWindows" --distpath $distRoot --workpath $workRoot --add-data "static;static" --hidden-import "app.main" --exclude-module "PyQt5" --exclude-module "PyQt6" --exclude-module "PySide2" --exclude-module "PySide6" launcher.py
+& $buildPython -m PyInstaller --noconfirm --clean --onedir --windowed --name "NovelAtlasWindows" --distpath $distRoot --workpath $workRoot --add-data "static;static" --add-data "evals/quality_corpus_manifest.json;evals" --hidden-import "app.main" --exclude-module "PyQt5" --exclude-module "PyQt6" --exclude-module "PySide2" --exclude-module "PySide6" launcher.py
 
 $zipPath = Join-Path $distRoot "NovelAtlasWindows-$release.zip"
 Compress-Archive -Path (Join-Path $distRoot "NovelAtlasWindows") -DestinationPath $zipPath -Force

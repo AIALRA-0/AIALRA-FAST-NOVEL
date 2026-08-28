@@ -11,7 +11,7 @@ test("2D 与 3D 地图共享编年状态并支持快速连续切换", async ({ p
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await expect(page.locator(".brand span")).toContainText("2.9.0");
+  await expect(page.locator(".brand span")).toContainText("2.9.1");
   await page.locator('.nav-item[data-view="map"]').click();
   const totalSteps = Number(await page.locator("#map-step-slider").getAttribute("max")) + 1;
   const totalPlaces = await page.locator(".map-node").count();
@@ -92,6 +92,7 @@ test("三层知识库可检索并在固定右栏显示证据、编辑和历史",
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.locator("#book-select").selectOption({ label: "长夜十二城 · 120章大型压力演示" });
   await page.locator('.nav-item[data-view="database"]').click();
   await expect(page.locator(".knowledge-workspace")).toBeVisible();
   await page.locator("#entry-search").fill("核心危机");
@@ -159,9 +160,9 @@ test("真实长篇世界图保留全部节点并分级显示标签", async ({ pa
   await expect(page.locator("#map-3d-regions")).toHaveCount(0);
   await expect.poll(async () => Number(await page.locator("#map-3d").getAttribute("data-region-mesh-count") || 0)).toBeGreaterThan(0);
   const layout = await (await page.request.get(`${baseURL}/api/books/${overview.book.id}/map-layout`)).json();
-  const evidenceRegionCount = layout.regions.filter((region) => region.kind === "evidence_containment").length;
+  const visibleRegionCount = layout.regions.filter((region) => Array.isArray(region.hull) && region.hull.length >= 3).length;
   const meshCount = Number(await page.locator("#map-3d").getAttribute("data-region-mesh-count") || 0);
-  expect(meshCount).toBeLessThanOrEqual(evidenceRegionCount + 1);
+  expect(meshCount).toBe(visibleRegionCount);
   await page.screenshot({ path: "output/playwright/v2.8-xiyouji-map-3d-regions.png", fullPage: false });
   await page.locator('.map-mode[data-mode="2d"]').click();
   await page.locator("#map-step-slider").evaluate((slider) => {
@@ -297,5 +298,58 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
   await expect(page.locator(".release-decision")).toBeVisible();
   await page.locator('.quality-tab[data-tab="cost"]').click();
   await expect(page.locator('.quality-tab[data-tab="cost"]')).toHaveClass(/active/);
+  expect(errors).toEqual([]);
+});
+
+test("2.9.1 地图控制栏不重叠且全世界显示全部故事区域", async ({ page }) => {
+  const errors = [];
+  page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
+  page.on("pageerror", (error) => errors.push(error.message));
+
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.locator("#book-select").selectOption({ label: "长夜十二城 · 120章大型压力演示" });
+  await page.locator('.nav-item[data-view="map"]').click();
+
+  const layoutResponse = await page.request.get(`${baseURL}/api/books/${await page.locator("#book-select").inputValue()}/map-layout`);
+  const layout = await layoutResponse.json();
+  expect(layout.region_coverage.generated_region_count).toBe(4);
+  expect(layout.region_coverage.visible_region_count).toBe(4);
+  await expect(page.locator(".semantic-region")).toHaveCount(4);
+
+  const sizes = [
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1920, height: 1080 },
+    { width: 720, height: 960 },
+    { width: 390, height: 844 },
+  ];
+  const zooms = [0.8, 1, 1.25, 1.5];
+  for (const size of sizes) {
+    for (const zoom of zooms) {
+      await page.setViewportSize({
+        width: Math.max(260, Math.round(size.width / zoom)),
+        height: Math.max(560, Math.round(size.height / zoom)),
+      });
+      const controls = page.locator(".map-control-deck");
+      await expect(controls).toBeVisible();
+      const boxes = await controls.locator(".map-view-toolbar, .map-viewport-tools").evaluateAll((elements) =>
+        elements.map((element) => {
+          const box = element.getBoundingClientRect();
+          return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+        }),
+      );
+      expect(boxes).toHaveLength(2);
+      const overlap = !(
+        boxes[0].right <= boxes[1].left || boxes[1].right <= boxes[0].left
+        || boxes[0].bottom <= boxes[1].top || boxes[1].bottom <= boxes[0].top
+      );
+      expect(overlap, `${size.width}x${size.height}@${zoom * 100}%`).toBe(false);
+    }
+  }
+
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.locator('.map-mode[data-mode="3d"]').click();
+  await expect.poll(async () => Number(await page.locator("#map-3d").getAttribute("data-region-mesh-count") || 0)).toBe(4);
   expect(errors).toEqual([]);
 });

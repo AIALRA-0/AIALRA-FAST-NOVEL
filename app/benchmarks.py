@@ -65,7 +65,7 @@ def _event_rank(connection: sqlite3.Connection, book_id: int, title_part: str) -
 
 
 def seed_benchmark_cases(connection: sqlite3.Connection, book_id: int) -> int:
-    """只为当前内置真实《西游记》样本登记人工金标准。"""
+    """Prepare deterministic Journey to the West candidates for later human review."""
 
     book = connection.execute(
         "SELECT title, original_filename FROM books WHERE id = ?",
@@ -81,20 +81,27 @@ def seed_benchmark_cases(connection: sqlite3.Connection, book_id: int) -> int:
             """
             INSERT INTO quality_benchmark_cases(
                 book_id, case_type, subject, expected_json, source_segment, note, critical,
-                suite_name, origin, holdout, confirmed_by_user, failure_category
-            ) VALUES (?, ?, ?, ?, ?, '人工核对《西游记》原文的回归用例', ?,
-                'real-novel-gold', 'manual', ?, 1, 'xiyouji-core')
+                suite_name, origin, holdout, confirmed_by_user, failure_category, review_status,
+                second_review_status
+            ) VALUES (?, ?, ?, ?, ?, '系统根据《西游记》固定题库准备的待人工核对候选', ?,
+                'real-novel-gold', 'agent_seeded_candidate', 0, 0, 'xiyouji-core', 'candidate',
+                'not_required')
             ON CONFLICT(book_id, case_type, subject, source_segment) DO UPDATE SET
                 expected_json = excluded.expected_json, critical = excluded.critical,
                 note = excluded.note, suite_name = excluded.suite_name,
                 origin = excluded.origin, holdout = excluded.holdout,
                 confirmed_by_user = excluded.confirmed_by_user,
-                failure_category = excluded.failure_category, updated_at = CURRENT_TIMESTAMP
+                failure_category = excluded.failure_category,
+                review_status = excluded.review_status,
+                second_review_status = excluded.second_review_status,
+                reviewer_id = '', reviewer_role = '', review_session = '',
+                review_evidence_hash = '', reviewed_at = NULL,
+                second_reviewer_id = '', second_reviewed_at = NULL,
+                updated_at = CURRENT_TIMESTAMP
             """,
             (
                 book_id, case["case_type"], case["subject"],
                 json.dumps(case["expected"], ensure_ascii=False), case["source"], case["critical"],
-                int(case["source"] % 5 == 0),
             ),
         )
     return len(XIYOUJI_CASES)
@@ -190,7 +197,12 @@ def evaluate_benchmarks(connection: sqlite3.Connection, book_id: int) -> dict[st
     """执行已登记用例并写回实际值，供页面和发布门禁读取。"""
 
     cases = connection.execute(
-        "SELECT * FROM quality_benchmark_cases WHERE book_id = ? ORDER BY critical DESC, id",
+        """
+        SELECT * FROM quality_benchmark_cases
+        WHERE book_id = ? AND confirmed_by_user = 1
+          AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
+        ORDER BY critical DESC, id
+        """,
         (book_id,),
     ).fetchall()
     passed = 0
@@ -224,7 +236,12 @@ def evaluation_progress(connection: sqlite3.Connection, *, refresh: bool = True)
     book_ids = [
         int(row["book_id"])
         for row in connection.execute(
-            "SELECT DISTINCT book_id FROM quality_benchmark_cases WHERE confirmed_by_user = 1 ORDER BY book_id"
+            """
+            SELECT DISTINCT book_id FROM quality_benchmark_cases
+            WHERE confirmed_by_user = 1
+              AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
+            ORDER BY book_id
+            """
         ).fetchall()
     ]
     per_book_counts = {
@@ -233,6 +250,7 @@ def evaluation_progress(connection: sqlite3.Connection, *, refresh: bool = True)
             """
             SELECT book_id, COUNT(*) AS case_count
             FROM quality_benchmark_cases WHERE confirmed_by_user = 1
+              AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
             GROUP BY book_id
             """
         ).fetchall()
@@ -244,12 +262,17 @@ def evaluation_progress(connection: sqlite3.Connection, *, refresh: bool = True)
     counts = connection.execute(
         """
         SELECT COUNT(*) AS confirmed,
-            COALESCE(SUM(CASE WHEN holdout = 1 THEN 1 ELSE 0 END), 0) AS holdout,
+            COALESCE(SUM(CASE WHEN review_status = 'sealed_holdout'
+                AND second_review_status = 'confirmed' THEN 1 ELSE 0 END), 0) AS holdout,
             COALESCE(SUM(CASE WHEN holdout = 0 THEN 1 ELSE 0 END), 0) AS development,
             COALESCE(SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END), 0) AS passed,
-            COALESCE(SUM(CASE WHEN holdout = 1 AND passed = 1 THEN 1 ELSE 0 END), 0) AS holdout_passed,
-            COALESCE(SUM(CASE WHEN critical = 1 AND COALESCE(passed, 0) != 1 THEN 1 ELSE 0 END), 0) AS critical_failed
+            COALESCE(SUM(CASE WHEN review_status = 'sealed_holdout'
+                AND second_review_status = 'confirmed' AND passed = 1 THEN 1 ELSE 0 END), 0) AS holdout_passed,
+            COALESCE(SUM(CASE WHEN critical = 1 AND COALESCE(passed, 0) != 1 THEN 1 ELSE 0 END), 0) AS critical_failed,
+            COALESCE(SUM(CASE WHEN (critical = 1 OR review_status = 'sealed_holdout')
+                AND second_review_status != 'confirmed' THEN 1 ELSE 0 END), 0) AS second_review_pending
         FROM quality_benchmark_cases WHERE confirmed_by_user = 1
+          AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
         """
     ).fetchone()
     confirmed = int(counts["confirmed"] or 0)
@@ -293,6 +316,7 @@ def evaluation_progress(connection: sqlite3.Connection, *, refresh: bool = True)
         and len(book_ids) >= 5
         and books_below_minimum == 0
         and holdout_share >= 20
+        and int(counts["second_review_pending"] or 0) == 0
     )
     quality_ready = bool(
         dataset_ready
@@ -311,6 +335,10 @@ def evaluation_progress(connection: sqlite3.Connection, *, refresh: bool = True)
         "overall_accuracy_percent": accuracy,
         "holdout_accuracy_percent": holdout_accuracy,
         "critical_failures": int(counts["critical_failed"] or 0),
+        "second_review_pending": int(counts["second_review_pending"] or 0),
+        "candidate_cases": int(connection.execute(
+            "SELECT COUNT(*) FROM quality_benchmark_cases WHERE review_status = 'candidate'"
+        ).fetchone()[0]),
         "quote_integrity_percent": quote_integrity,
         "unresolved_conflicts": unresolved,
         "minimum_cases": 300,

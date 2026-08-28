@@ -4,7 +4,7 @@
 
 Novel Atlas turns long-form fiction into a character graph, story chronology, 2D/3D semantic world map, and searchable knowledge base, while keeping an exact source passage for every accepted fact
 
-The current version is the `2.9.0-rc.1` release candidate. It is a runnable personal project, not a hosted multi-tenant service with a service-level commitment
+The current version is the `2.9.1-rc.1` release candidate. It is a runnable personal project, not a hosted multi-tenant service with a service-level commitment
 
 ![2D semantic world map with synchronized chronology playback](docs/assets/novel-atlas-map-2d.png)
 
@@ -92,18 +92,20 @@ npx playwright test tests/e2e_ui.spec.js --reporter=line # Run synthetic browser
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.ps1 # Verify version and dual-view contracts
 ```
 
-The current 2.9.0-rc.1 gate reports
+The current 2.9.1-rc.1 gate reports
 
-- 121 passing Python tests and 1 environment-dependent skip
-- 6 passing Chromium flows in the isolated synthetic database, with 3 real-corpus flows conditionally skipped there
-- 2 passing Journey to the West flows covering 1,049 chronology steps, 157 places, 45 semantic regions, and 40 bidirectional relations
-- 1 passing five-book public-domain library flow covering search, selection, and opening
+- 124 passing Python tests and 1 environment-dependent skip, including deterministic import checks for 1,011 source segments and 3,283,083 characters across five local public-domain works
+- 7 passing Chromium flows, with 3 specialized long-form acceptance flows conditionally skipped in this run
+- 20 bounding-box checks across five viewport sizes and four effective zoom levels, with all four large-demo regions visible in both 2D and 3D
+- the current chronology, place, people, and source button remain visible at 1366×768, while stale story-context requests cannot cross book switches
 - passing JavaScript syntax and current-state contract checks
-- browser coverage for rapid navigation, 2D/3D parity, direct 3D region meshes, explicit final-step completion, long-form label collisions, narrow layouts, unified selectors, spoiler-progress input, and knowledge search
+- browser coverage for rapid navigation, 2D/3D parity, complete region visibility, explicit final-step completion, narrow layouts, unified selectors, spoiler-progress input, and knowledge search
 
 The real-novel acceptance database and screenshots remain local and are excluded from the public repository
 
-These numbers describe fixed samples only. They do not imply 95% accuracy for arbitrary novels. Only 28 of 300 human-confirmed gold cases exist, so the release candidate does not claim that the formal quality gate has passed
+These numbers describe fixed samples only and do not imply 95% accuracy for arbitrary novels. The database currently contains 28 machine-prepared candidates, 0 provably human-confirmed cases, and 0 valid sealed holdouts
+
+The formal quality corpus combines Journey to the West, Dream of the Red Chamber, Romance of the Three Kingdoms, one user-authorized modern fantasy novel, and one user-authorized modern urban or translated novel. Each work requires 48 development cases and 12 sealed holdouts. Until both modern slots and all human reviews are complete, the project reports classical-fiction coverage only
 
 ## Data and security
 

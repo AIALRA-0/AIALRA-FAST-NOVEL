@@ -458,8 +458,11 @@ class BenchmarkCaseCreate(BaseModel):
     suite_name: str = Field(default="book-gold", min_length=2, max_length=120)
     origin: Literal["manual", "user_correction", "imported", "historical_feedback"] = "manual"
     holdout: bool = False
-    confirmed_by_user: bool = True
+    confirmed_by_user: bool = False
     failure_category: str = Field(default="", max_length=120)
+    reviewer_id: str = Field(default="", max_length=120)
+    reviewer_role: str = Field(default="owner", max_length=80)
+    review_session: str = Field(default="", max_length=120)
 
 
 class BenchmarkCasePatch(BaseModel):
@@ -480,6 +483,9 @@ class BenchmarkCasePatch(BaseModel):
     holdout: bool | None = None
     confirmed_by_user: bool | None = None
     failure_category: str | None = Field(default=None, max_length=120)
+    reviewer_id: str | None = Field(default=None, max_length=120)
+    reviewer_role: str | None = Field(default=None, max_length=80)
+    review_session: str | None = Field(default=None, max_length=120)
 
 
 class BenchmarkCandidateResolve(BaseModel):
@@ -489,6 +495,16 @@ class BenchmarkCandidateResolve(BaseModel):
     holdout: bool = False
     critical: bool | None = None
     note: str = Field(default="", max_length=1_000)
+    reviewer_id: str = Field(default="local-reviewer", min_length=2, max_length=120)
+    reviewer_role: str = Field(default="owner", min_length=2, max_length=80)
+    review_session: str = Field(default="", max_length=120)
+
+
+class BenchmarkSecondReview(BaseModel):
+    """Record an independent second pass for a critical or sealed benchmark."""
+
+    reviewer_id: str = Field(default="second-reviewer", min_length=2, max_length=120)
+    note: str = Field(min_length=2, max_length=1_000)
 
 
 class CollaborationItemCreate(BaseModel):

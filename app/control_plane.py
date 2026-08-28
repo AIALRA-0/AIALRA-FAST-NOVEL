@@ -343,13 +343,20 @@ def suite_version(connection: sqlite3.Connection, book_id: int | None) -> str:
 
     if book_id is None:
         rows = connection.execute(
-            "SELECT id, updated_at, expected_json FROM quality_benchmark_cases WHERE confirmed_by_user = 1 ORDER BY id"
+            """
+            SELECT id, updated_at, expected_json FROM quality_benchmark_cases
+            WHERE confirmed_by_user = 1
+              AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
+            ORDER BY id
+            """
         ).fetchall()
     else:
         rows = connection.execute(
             """
             SELECT id, updated_at, expected_json FROM quality_benchmark_cases
-            WHERE book_id = ? AND confirmed_by_user = 1 ORDER BY id
+            WHERE book_id = ? AND confirmed_by_user = 1
+              AND review_status IN ('confirmed_development', 'sealed_holdout', 'adjudicated')
+            ORDER BY id
             """,
             (book_id,),
         ).fetchall()

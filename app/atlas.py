@@ -10,7 +10,7 @@ from collections import defaultdict, deque
 from typing import Any
 
 
-LAYOUT_VERSION = "semantic-atlas-v2.9-lod4"
+LAYOUT_VERSION = "semantic-atlas-v2.9.1-lod4"
 _DIRECTION_VECTORS = {
     "north": (0.0, -1.0), "south": (0.0, 1.0),
     "east": (1.0, 0.0), "west": (-1.0, 0.0),
@@ -87,6 +87,48 @@ def _region_boundary(points: list[tuple[float, float]], padding: float = 54.0) -
             {"x": round(min_x, 2), "y": round(max_y, 2)},
         ]
     return _expanded_hull(points, padding)
+
+
+def _region_overlap_summary(regions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Measure same-level story-region overlap with deterministic bounding boxes."""
+
+    topology = [region for region in regions if region.get("kind") == "topological_cluster"]
+    overlaps: list[dict[str, Any]] = []
+    maximum = 0.0
+    for index, left in enumerate(topology):
+        left_hull = left.get("hull") or []
+        if len(left_hull) < 3:
+            continue
+        left_min_x = min(float(point["x"]) for point in left_hull)
+        left_max_x = max(float(point["x"]) for point in left_hull)
+        left_min_y = min(float(point["y"]) for point in left_hull)
+        left_max_y = max(float(point["y"]) for point in left_hull)
+        left_area = max(1.0, (left_max_x - left_min_x) * (left_max_y - left_min_y))
+        for right in topology[index + 1:]:
+            right_hull = right.get("hull") or []
+            if len(right_hull) < 3:
+                continue
+            right_min_x = min(float(point["x"]) for point in right_hull)
+            right_max_x = max(float(point["x"]) for point in right_hull)
+            right_min_y = min(float(point["y"]) for point in right_hull)
+            right_max_y = max(float(point["y"]) for point in right_hull)
+            overlap_width = max(0.0, min(left_max_x, right_max_x) - max(left_min_x, right_min_x))
+            overlap_height = max(0.0, min(left_max_y, right_max_y) - max(left_min_y, right_min_y))
+            if not overlap_width or not overlap_height:
+                continue
+            right_area = max(1.0, (right_max_x - right_min_x) * (right_max_y - right_min_y))
+            ratio = overlap_width * overlap_height / min(left_area, right_area)
+            maximum = max(maximum, ratio)
+            overlaps.append({
+                "left_region_id": left["id"],
+                "right_region_id": right["id"],
+                "overlap_ratio_percent": round(ratio * 100, 2),
+            })
+    return {
+        "same_level_overlap_pairs": len(overlaps),
+        "maximum_overlap_ratio_percent": round(maximum * 100, 2),
+        "pairs": overlaps,
+    }
 
 
 def _containment_depths(node_ids: list[int], relations: list[dict[str, Any]]) -> tuple[dict[int, int], dict[int, int]]:
@@ -476,7 +518,9 @@ def build_map_layout_snapshot(
             "id": containment_region_ids[container],
             "label": name_by_id.get(container, f"区域 {container}"),
             "kind": "evidence_containment",
+            "region_kind": "evidence_containment",
             "node_ids": members,
+            "member_count": len(members),
             "parent_region_id": containment_region_ids.get(parent_container),
             "containment_depth": depths.get(container, 0),
             "hull": hull,
@@ -484,7 +528,9 @@ def build_map_layout_snapshot(
             "palette_index": index % 6,
             "evidence_ids": sorted(set(relation_ids_by_container[container])),
             "boundary_kind": "semantic",
-            "display_policy": "always",
+            "display_policy": "all_views",
+            "visibility_reason": "原文包含关系区域在全部地图视角中保留",
+            "quality_state": "evidence_backed",
             "formal_geography": False,
             "evidence_level": "explicit",
         })
@@ -501,7 +547,9 @@ def build_map_layout_snapshot(
                 "id": f"topology-{index + 1}",
                 "label": f"故事拓扑片区 {index + 1}",
                 "kind": "topological_cluster",
+                "region_kind": "story_cluster",
                 "node_ids": component,
+                "member_count": len(component),
                 "parent_region_id": None,
                 "containment_depth": 0,
                 "hull": hull,
@@ -509,10 +557,36 @@ def build_map_layout_snapshot(
                 "palette_index": index % 6,
                 "evidence_ids": [],
                 "boundary_kind": "semantic",
-                "display_policy": "focus_only",
+                "display_policy": "all_views",
+                "visibility_reason": "故事组织区域在全世界视角中完整展示",
+                "quality_state": "semantic_only",
                 "formal_geography": False,
                 "evidence_level": "semantic",
             })
+    assigned_node_ids = {
+        int(node_id)
+        for region in regions
+        for node_id in region.get("node_ids", [])
+    }
+    unassigned_node_ids = sorted(valid_ids - assigned_node_ids)
+    overlap_summary = _region_overlap_summary(regions)
+    quality_issues = []
+    if unassigned_node_ids:
+        quality_issues.append({
+            "issue_type": "unassigned_places",
+            "severity": "warning",
+            "count": len(unassigned_node_ids),
+            "node_ids": unassigned_node_ids,
+            "message": f"有 {len(unassigned_node_ids)} 个地点尚未归入任何语义区域",
+        })
+    if overlap_summary["maximum_overlap_ratio_percent"] > 20:
+        quality_issues.append({
+            "issue_type": "region_overlap",
+            "severity": "warning",
+            "count": overlap_summary["same_level_overlap_pairs"],
+            "message": "同级故事区域存在超过 20% 的边界框重叠，需要重新整理布局",
+        })
+
     label_padding_x = 88.0
     label_padding_y = 54.0
     min_world_x = min((node["x"] - label_padding_x for node in nodes), default=0.0)
@@ -539,6 +613,19 @@ def build_map_layout_snapshot(
         "fact_source": "overview.story_map_steps",
         "nodes": nodes,
         "regions": regions,
+        "region_coverage": {
+            "total_place_count": len(nodes),
+            "assigned_place_count": len(nodes) - len(unassigned_node_ids),
+            "unassigned_place_count": len(unassigned_node_ids),
+            "generated_region_count": len(regions),
+            "evidence_region_count": sum(1 for region in regions if region["kind"] == "evidence_containment"),
+            "story_region_count": sum(1 for region in regions if region["kind"] == "topological_cluster"),
+            "visible_region_count": len(regions),
+            "hidden_reasons": [],
+            "overlap": overlap_summary,
+        },
+        "unassigned_node_ids": unassigned_node_ids,
+        "quality_issues": quality_issues,
         "world_bounds": {
             "min_x": round(min_world_x, 2), "min_y": round(min_world_y, 2),
             "max_x": round(max_world_x, 2), "max_y": round(max_world_y, 2),

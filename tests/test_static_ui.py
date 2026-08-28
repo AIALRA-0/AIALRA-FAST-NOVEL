@@ -137,6 +137,19 @@ def test_v29_shared_select_progress_and_quality_workbench_contract() -> None:
     assert 'data-tab="cost"' in script
 
 
+def test_v291_map_controls_flow_without_absolute_overlap_and_regions_stay_visible() -> None:
+    script = _text("static/app.js")
+    styles = _text("static/styles.css")
+    assert 'class="map-control-deck"' in script
+    assert 'class="map-view-menu"' in script
+    assert "region.display_policy === \"focus_only\"" not in script
+    assert ".slice(0, 1)" not in script[script.index("function map3DVisibleRegions"):script.index("function resetMapStateForBook")]
+    assert ".map-control-deck { container-type: inline-size" in styles
+    assert ".map-stage .map-viewport-controls { position: static" in styles
+    assert ".semantic-region.is-topology path" in styles
+    assert ".semantic-region.is-evidence path" in styles
+
+
 def test_v29_systems_and_story_context_are_reader_visible_without_a_second_map_sequence() -> None:
     script = _text("static/app.js")
     page = _text("static/index.html")
