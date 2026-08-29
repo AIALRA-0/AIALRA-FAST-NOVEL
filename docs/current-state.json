@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.3-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "local-51d86ba-validated;public-clean-root-candidate-prepared",
+  "source_commit": "local-5e13f61-validated;public-clean-root-1955ba8-ci-passed",
   "active_objective": "发布 2.9.3 区域几何、增量分析与审核工作台候选版",
   "contracts": {
     "fact_source": "原文证据",
@@ -16,6 +16,7 @@
   "quality_gate": {
     "unit_tests": "passed:146;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
+    "github_actions": "passed:quality-gate-run-33271299183;python-browser-container",
     "browser_flows": "passed:12;skipped:1-legacy-thousand-step-full-book-fixture;12-open-work-library-flow-passed;3d-relationship-hover-passed;story-scope-passed",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
@@ -34,13 +35,13 @@
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
   },
   "publication": {
-    "github": "v2.9.3-rc.1-clean-root-candidate;old-main-retained;publication-gate-passed",
-    "github_commit": "clean-root-release-branch-prepared-from-local-51d86ba",
-    "github_release": "https://github.com/ExampleOrg-0/ExampleOrg-FAST-NOVEL/releases/tag/v2.9.3-rc.1",
-    "deployment": "vps-running-2.9.3-rc.1;container-healthy;readyz-version-verified;database-volume-preserved",
+    "github": "v2.9.3-rc.1-clean-root-candidate;old-main-retained;strict-publication-gate-and-actions-passed",
+    "github_commit": "release/2.9.3-rc.1-clean@1955ba85aec2d8df7dd2a65c7d81239b3a1ac2b3",
+    "github_release": "https://github.com/AIALRA-0/AIALRA-FAST-NOVEL/releases/tag/v2.9.3-rc.1",
+    "deployment": "vps-running-clean-root-1955ba8;image-sha256-41f7b59c6eee;container-healthy;readyz-version-verified;database-volume-preserved",
     "hostname": "novel.aialra.online",
     "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-roundtrip-requires-user-session",
-    "rollback": "pre-2.9.3-data-backup-at-20260829T183405Z;previous-2.9.2-image-and-release-retained"
+    "rollback": "pre-final-data-backup-at-20260829T194013Z;pre-final-2.9.3-image-and-previous-2.9.2-image-release-retained"
   },
   "last_updated": "2026-08-29"
 }

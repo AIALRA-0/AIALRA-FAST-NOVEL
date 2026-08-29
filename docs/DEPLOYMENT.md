@@ -34,10 +34,12 @@
 
 ## 2.9.3 候选版部署记录
 
-- 当前发布目录为 `/srv/aialra/apps/novel-atlas/releases/2.9.3-rc.1-51d86ba`
+- 当前发布目录为 `/srv/aialra/apps/novel-atlas/releases/2.9.3-rc.1-1955ba8-final`
 - 容器镜像为 `aialra/novel-atlas:2.9.3-rc.1`
-- 发布前数据卷备份为 `/srv/aialra/apps/novel-atlas/backups/20260829T183405Z-pre-2.9.3-rc.1`
+- 当前镜像摘要为 `41f7b59c6eee`
+- 发布前数据卷备份为 `/srv/aialra/apps/novel-atlas/backups/20260829T194013Z-pre-2.9.3-rc.1-final`
 - 服务器内部 `/readyz` 返回 `2.9.3-rc.1`；容器健康状态为 `healthy`
 - 原数据卷继续挂载到 `/data`；升级未导入公开仓库语料，也未覆盖用户数据
-- 旧 `2.9.2-rc.1` 发布目录和镜像继续保留；切换失败时可以恢复旧软链接并重新启动旧容器
-- GitHub 发布使用无本机历史的干净根提交；旧 `main` 分支保留，不通过风险豁免强行放行旧历史
+- 切换前的 `2.9.3-rc.1` 镜像另存为 `aialra/novel-atlas:2.9.3-rc.1-pre-final-51d86ba`；旧 `2.9.2-rc.1` 发布目录和镜像继续保留
+- GitHub 干净候选提交为 `1955ba8`；Actions 运行 `33271299183` 已通过；旧 `main` 分支保留，不通过风险豁免强行放行旧历史
+- 公网根页面、书库接口和就绪接口均已验证先跳转 Authentik；TLS 与安全响应头正常
