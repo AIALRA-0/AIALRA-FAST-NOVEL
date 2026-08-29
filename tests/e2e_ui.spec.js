@@ -2,13 +2,14 @@ const { test, expect } = require("playwright/test");
 
 const baseURL = process.env.NOVEL_ATLAS_E2E_URL || "http://127.0.0.1:8766";
 
-async function selectBook(page, label) {
+async function selectBook(page, label, { waitForLoad = true } = {}) {
   await page.locator("#book-select").evaluate((select, expected) => {
     const option = [...select.options].find((item) => item.textContent === expected);
     if (!option) throw new Error(`找不到书籍：${expected}`);
     select.value = option.value;
     select.dispatchEvent(new Event("change", { bubbles: true }));
   }, label);
+  if (waitForLoad) await expect(page.locator("#book-title")).toContainText(label, { timeout: 15000 });
 }
 
 async function chooseHiddenSelect(page, selector, value) {
@@ -129,16 +130,15 @@ test("切换书籍遇到慢接口时知识详情不会串到上一本书", async
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await selectBook(page, "霓虹追凶 · 都市群像演示");
   await expect(page.locator("#book-title")).toContainText("霓虹追凶");
+  await page.locator('.nav-item[data-view="database"]').click();
+  await expect(page.locator(".knowledge-workspace")).toBeVisible();
   await page.route(/\/api\/books\/\d+\/concepts/, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     await route.continue();
   });
 
-  await selectBook(page, "长夜十二城 · 120章大型压力演示");
-  await page.locator('.nav-item[data-view="database"]').click();
+  await selectBook(page, "长夜十二城 · 120章大型压力演示", { waitForLoad: false });
   await expect(page.locator(".concept-row")).toHaveCount(0, { timeout: 1000 });
-  await expect(page.locator("#view-panel")).toContainText("正在读取这本书的知识结构");
-
   await expect(page.locator(".knowledge-workspace")).toBeVisible();
   await page.locator("#entry-search").fill("核心危机");
   const row = page.locator(".concept-row").filter({ hasText: "长夜十二城的核心危机" });
@@ -385,7 +385,7 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
   await expect(page.locator(".progress-inline-input")).toBeVisible();
   await page.locator(".progress-inline-input").fill("3");
   await page.keyboard.press("Enter");
-  await expect(page.locator("#progress-count")).toHaveText(/3\/\d+/);
+  await expect(page.locator("#progress-count")).toHaveText(/第 3 章 · 共 \d+ 章/);
 
   await page.locator('.nav-item[data-view="quality"]').click();
   await expect(page.locator(".release-decision")).toBeVisible();

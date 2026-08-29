@@ -5,6 +5,7 @@ const state = {
   providers: [],
   bookId: null,
   overview: null,
+  overviewRequestSerial: 0,
   view: "relationships",
   activeLocation: null,
   activeJobId: null,
@@ -697,6 +698,7 @@ function renderProviderOptions() {
 async function loadOverview(throughSegment = null, silent = false) {
   if (!state.bookId) return;
   const requestedBookId = state.bookId;
+  const requestSerial = ++state.overviewRequestSerial;
   if (Number(state.conceptsBookId) !== Number(requestedBookId)) {
     state.concepts = [];
     state.knowledgeFacets = null;
@@ -716,9 +718,10 @@ async function loadOverview(throughSegment = null, silent = false) {
     api(`/api/books/${requestedBookId}/concepts?status=&limit=1000`),
     api(`/api/books/${requestedBookId}/systems`),
   ]);
+  if (requestSerial !== state.overviewRequestSerial || state.bookId !== requestedBookId) return;
   const reviewTasks = await api(`/api/books/${requestedBookId}/review-tasks`);
   const narrativeStructure = await api(`/api/books/${requestedBookId}/narrative-structure`);
-  if (state.bookId !== requestedBookId) return;
+  if (requestSerial !== state.overviewRequestSerial || state.bookId !== requestedBookId) return;
   state.overview = overview;
   state.benchmarks = benchmarks;
   state.benchmarkCandidates = benchmarkCandidates;
@@ -3416,7 +3419,9 @@ async function archiveSystemRelationFromUi(relationId) {
   } catch (error) { toast(error.message, true); }
 }
 
-function renderDatabase(query = "", category = "all") {
+function renderDatabase(query = state.knowledgeQuery || "", category = state.knowledgeCategory || "all") {
+  state.knowledgeQuery = query;
+  state.knowledgeCategory = category;
   if (Number(state.conceptsBookId) !== Number(state.bookId)) {
     $("#view-panel").innerHTML = panelHead("知识库", "正在切换到当前作品") + '<div class="loading">正在读取这本书的知识结构…</div>';
     return;
@@ -3433,6 +3438,7 @@ function renderDatabase(query = "", category = "all") {
   $("#view-panel").innerHTML = panelHead("知识库", "原子事实、概念分类和读者说明分层保存；原文、人工内容与外部资料不会混成一种证据") + `<div class="knowledge-workspace"><aside class="knowledge-sidebar"><h3>分类</h3>${facetButtons}<details class="world-create"><summary>创建概念或文件夹</summary><div class="world-create-form"><label>分类<input id="concept-create-category" maxlength="80" value="term" placeholder="例如：skill"></label><label>名称<input id="concept-create-label" maxlength="160" placeholder="稳定、便于检索的名称"></label><label>上位概念<select id="concept-create-parent">${parentOptions}</select></label><label>别名<input id="concept-create-aliases" maxlength="500" placeholder="使用逗号分隔"></label><label>说明<textarea id="concept-create-description" rows="4" maxlength="5000"></textarea></label><button id="concept-create-submit" class="button button-primary" type="button">创建概念</button></div></details></aside><section class="knowledge-main"><div class="database-toolbar"><input id="entry-search" class="search-input" value="${escapeHtml(query)}" placeholder="搜索名称、别名、说明或证据" aria-label="搜索知识库"></div><div class="knowledge-summary-grid"><article><strong>${Number(facets.concept_count || 0)}</strong><span>知识概念</span></article><article><strong>${Number(facets.evidence_link_count || 0)}</strong><span>证据连接</span></article><article><strong>${Number(facets.needs_classification || 0)}</strong><span>待归类</span></article></div>${conceptRows}</section></div>`;
   $("#entry-search").addEventListener("input", (event) => {
     const value = event.target.value;
+    state.knowledgeQuery = value;
     window.clearTimeout(state.knowledgeSearchTimer);
     state.knowledgeSearchTimer = window.setTimeout(() => {
       if (state.view !== "database") return;
@@ -3442,7 +3448,10 @@ function renderDatabase(query = "", category = "all") {
       search?.setSelectionRange(value.length, value.length);
     }, 120);
   });
-  $$(".knowledge-facet").forEach((button) => button.addEventListener("click", () => renderDatabase(query, button.dataset.category)));
+  $$(".knowledge-facet").forEach((button) => button.addEventListener("click", () => {
+    state.knowledgeCategory = button.dataset.category;
+    renderDatabase(state.knowledgeQuery || "", state.knowledgeCategory);
+  }));
   $$(".concept-row").forEach((button) => button.addEventListener("click", () => openConceptDetails(Number(button.dataset.concept))));
   $("#concept-create-submit").addEventListener("click", async () => {
     const label = $("#concept-create-label").value.trim();
