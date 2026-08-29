@@ -1,0 +1,29 @@
+{
+  "version": "feedback-regression-v1",
+  "cases": [
+    {"id": "REL-001", "category": "relationship", "requirement": "明确父母关系必须建立有向关系并保留原文证据"},
+    {"id": "REL-002", "category": "relationship", "requirement": "孤立节点必须完成全窗口二次审查后才能确认孤立"},
+    {"id": "REL-003", "category": "relationship", "requirement": "同人异名与同名异人分别测试"},
+    {"id": "TIME-001", "category": "chronology", "requirement": "石猴出世必须早于大闹天宫"},
+    {"id": "TIME-002", "category": "chronology", "requirement": "倒叙和回忆不能按叙事出现位置直接进入主线"},
+    {"id": "TIME-003", "category": "chronology", "requirement": "互相冲突的时间约束进入可解决状态"},
+    {"id": "MAP-001", "category": "map", "requirement": "原文明示方位必须进入地点约束"},
+    {"id": "MAP-002", "category": "map", "requirement": "原文未提供方位时只显示拓扑连接"},
+    {"id": "MAP-003", "category": "map", "requirement": "地图节点和标签不能互相遮挡"},
+    {"id": "MAP-004", "category": "journey", "requirement": "人物位置、当前故事和步骤编号同步更新"},
+    {"id": "MAP-005", "category": "journey", "requirement": "连续点击时新动画从当前画面位置开始"},
+    {"id": "MAP-006", "category": "journey", "requirement": "最后一步进入完成状态并停止计时器"},
+    {"id": "WORLD-001", "category": "world", "requirement": "语义高度重复的世界卡不能重复展示"},
+    {"id": "WORLD-002", "category": "world", "requirement": "世界信息支持搜索、分类、编辑、归档、恢复和再生成"},
+    {"id": "DB-001", "category": "entry", "requirement": "同名条目按稳定属性合并并保留证据"},
+    {"id": "LIB-001", "category": "library", "requirement": "文件夹和书籍支持增删改查"},
+    {"id": "LIB-002", "category": "incremental", "requirement": "安全追加不重跑未受影响旧章节"},
+    {"id": "CONFLICT-001", "category": "conflict", "requirement": "冲突可以自动解决或由用户选择，不能作为普通报错悬挂"},
+    {"id": "COST-001", "category": "cost", "requirement": "每次 API 调用展示输入、输出、缓存和美元费用"},
+    {"id": "COST-002", "category": "cost", "requirement": "ChatGPT 登录通道不伪造单次美元费用"},
+    {"id": "PROMPT-001", "category": "prompt", "requirement": "最终拼装提示词全文可查看"},
+    {"id": "PROMPT-002", "category": "prompt", "requirement": "阅读规则和外部事实分开保存"},
+    {"id": "PROMPT-003", "category": "prompt", "requirement": "提示词草稿完成单片段试跑后才能发布"},
+    {"id": "TRACE-001", "category": "trace", "requirement": "每次运行保存合同、提示词、规则、模型、用量和验证版本"}
+  ]
+}

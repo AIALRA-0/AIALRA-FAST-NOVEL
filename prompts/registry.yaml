@@ -1,0 +1,42 @@
+{
+  "schema_version": "prompt-registry-v1",
+  "storage": "SQLite prompt_bundle_versions",
+  "tasks": {
+    "extraction": {
+      "label": "片段结构抽取",
+      "default_source": "app.prompts.SYSTEM_PROMPT",
+      "layers": ["core", "task", "domain_rules", "runtime_context"],
+      "external_facts_injected": false
+    },
+    "global_review": {
+      "label": "全书事实整理",
+      "default_source": "app.prompts.GLOBAL_REVIEW_PROMPT",
+      "layers": ["core", "task", "domain_rules", "verified_facts"],
+      "external_facts_injected": false
+    },
+    "record_regeneration": {
+      "label": "世界信息和条目再生成",
+      "default_source": "app.prompts.RECORD_REGENERATION_PROMPT",
+      "layers": ["core", "task", "domain_rules", "verified_quotes"],
+      "external_facts_injected": false
+    },
+    "connectivity_audit": {
+      "label": "孤立人物与势力关系复审",
+      "default_source": "app.prompts.CONNECTIVITY_AUDIT_PROMPT",
+      "layers": ["core", "task", "domain_rules", "mention_windows"],
+      "external_facts_injected": false
+    }
+  },
+  "states": ["draft", "staging", "production", "archived"],
+  "promotion_requirements": [
+    "single_segment_trial",
+    "confirmed_gold_cases_at_least_300",
+    "covered_books_at_least_5",
+    "holdout_share_at_least_20_percent",
+    "holdout_accuracy_at_least_95_percent",
+    "critical_gold_cases_100_percent",
+    "quote_integrity_100_percent",
+    "unresolved_critical_conflicts_zero",
+    "explicit_user_promotion"
+  ]
+}
