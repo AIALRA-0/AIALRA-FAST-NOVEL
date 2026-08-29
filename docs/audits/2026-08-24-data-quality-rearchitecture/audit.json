@@ -1,0 +1,202 @@
+{
+  "meta": {
+    "contract_version": "1.0",
+    "title": "小说证据图谱数据质量重构审计",
+    "mode": "standard",
+    "as_of": "2026-08-24",
+    "status": "complete",
+    "scope": "诊断《西游记》人物归一、故事时间、主线地图、关系图交互、世界信息和条目数据库的质量问题，并决定后续实施路线",
+    "exclusions": ["本轮不修改运行中的应用", "本轮不重新调用模型处理整本小说"]
+  },
+  "decision_problem": {
+    "project_classification": "高风险语义数据重构",
+    "risk_level": "high",
+    "decision_owner": "用户",
+    "desired_outcome": "让超长小说的每个来源片段、实体判断、事件时间、人物行程和生成内容可追溯、可复核、可回滚",
+    "current_state": "界面已经能展示证据图谱，但人物别名分裂、故事时间错排、行程缺漏和质量指标失真已经影响使用",
+    "decision": "停止继续修补派生视图，保留证据底座并重建实体、时间和行程三层语义数据",
+    "success_metrics": [
+      "全部原文片段都有处理状态",
+      "全部入库事实都有原文定位",
+      "全部不确定判断都显式保留",
+      "人物合并和二次生成都能回滚",
+      "时间冲突与行程缺口不会被静默隐藏"
+    ],
+    "constraints": ["控制模型调用成本", "保留现有可用数据", "先小样本验收再整本重跑", "用户确认后才实施"],
+    "irreversible_actions": ["删除被合并实体", "覆盖人工编辑内容", "未经过基准验收就重新分析整本书"],
+    "research_budget": {
+      "overall_limit": "一次代码与数据库审计，加六类公开资料检索",
+      "parallel_capacity": 1,
+      "paid_or_private_access": [],
+      "cutoff_policy": "现有代码、实际数据库、用户截图和直接公开资料已经足以改变实施路线"
+    },
+    "reversal_evidence": ["《西游记》故事时间排序首项不是石猴出世", "地图自动主角只匹配陈玄奘单一实体编号", "地图远端节点被样式直接设为完全透明"]
+  },
+  "questions": [
+    {
+      "id": "Q1",
+      "question": "人物重复候选能否自动处理，同时避免误合并",
+      "critical": true,
+      "internal_probe": "检查 74 组候选的置信度分布、证据结构和合并回滚能力",
+      "external_probe": "检查长篇人物共指研究和模型自我纠错证据",
+      "internal_status": "answered",
+      "external_status": "answered",
+      "internal_source_ids": ["S1", "S3"],
+      "external_source_ids": ["S6", "S7"],
+      "internal_gap": "现有候选缺少逐条支持证据与反证",
+      "external_gap": "没有任何通用方法能保证长篇共指零错误"
+    },
+    {
+      "id": "Q2",
+      "question": "故事时间为什么错排以及如何稳定重建",
+      "critical": true,
+      "internal_probe": "检查事件顺序入库与全书重排算法，并核对《西游记》实际结果",
+      "external_probe": "检查成熟时间标注体系对时间关系和不确定性的表达",
+      "internal_status": "answered",
+      "external_status": "answered",
+      "internal_source_ids": ["S1", "S2"],
+      "external_source_ids": ["S8"],
+      "internal_gap": "现有算法没有可靠的全局偏序和环冲突隔离",
+      "external_gap": "时间标注规范不能代替小说领域的人工基准"
+    },
+    {
+      "id": "Q3",
+      "question": "地图为什么从第四十七回附近开始并且节点消失",
+      "critical": true,
+      "internal_probe": "检查自动主角筛选、地点覆盖率和节点显示样式",
+      "external_probe": "检查成熟世界构建产品的地图与时间线联动方式",
+      "internal_status": "answered",
+      "external_status": "answered",
+      "internal_source_ids": ["S1", "S3", "S4"],
+      "external_source_ids": ["S10"],
+      "internal_gap": "一般事件抽取不能覆盖全部旅行段落",
+      "external_gap": "产品参考只能证明交互形态，不能证明本项目数据完整"
+    },
+    {
+      "id": "Q4",
+      "question": "能否对超长小说承诺语义结果百分之百无缺漏且准确",
+      "critical": true,
+      "internal_probe": "区分证据覆盖率、处理覆盖率和语义准确率",
+      "external_probe": "检查长上下文中部信息退化和真实长篇共指限制",
+      "internal_status": "answered",
+      "external_status": "answered",
+      "internal_source_ids": ["S1", "S5"],
+      "external_source_ids": ["S6", "S9"],
+      "internal_gap": "当前 100% 指标只表示已保存记录有引文",
+      "external_gap": "公开研究没有支持任意长篇小说语义零漏错的结论"
+    },
+    {
+      "id": "Q5",
+      "question": "关系图拖动和条目二次生成应当怎样设计",
+      "critical": false,
+      "internal_probe": "检查拖动结束处理、手工编辑接口和现有页面交互",
+      "external_probe": "检查图组件拖动接口和成熟产品交互",
+      "internal_status": "answered",
+      "external_status": "answered",
+      "internal_source_ids": ["S4", "S5"],
+      "external_source_ids": ["S10", "S11"],
+      "internal_gap": "当前只有弹窗式文本编辑，没有生成草稿与版本比较",
+      "external_gap": "外部组件只提供能力，具体体验仍需本项目可用性测试"
+    }
+  ],
+  "source_map": [
+    {"id": "M1", "question_ids": ["Q1"], "origin": "internal", "channel": "local database and code", "target": "合并候选、实体记录和删除式合并实现", "decision_use": "判断自动合并风险", "priority": "high", "access_status": "searched"},
+    {"id": "M2", "question_ids": ["Q1"], "origin": "external", "channel": "official repository and peer review", "target": "BookNLP 共指限制与模型自纠研究", "decision_use": "确定自动复核边界", "priority": "high", "access_status": "searched"},
+    {"id": "M3", "question_ids": ["Q2"], "origin": "internal", "channel": "local code and database", "target": "事件排序入库、重排算法和实际错序记录", "decision_use": "定位时间线根因", "priority": "high", "access_status": "searched"},
+    {"id": "M4", "question_ids": ["Q2"], "origin": "external", "channel": "official specification", "target": "TimeML 时间关系表达", "decision_use": "选择偏序数据模型", "priority": "high", "access_status": "searched"},
+    {"id": "M5", "question_ids": ["Q3"], "origin": "internal", "channel": "local code, database and screenshot", "target": "主角过滤、行程覆盖和节点隐藏", "decision_use": "定位地图缺漏", "priority": "high", "access_status": "searched"},
+    {"id": "M6", "question_ids": ["Q3"], "origin": "external", "channel": "official product documentation", "target": "World Anvil 地图与时间线联动", "decision_use": "校验交互方向", "priority": "medium", "access_status": "searched"},
+    {"id": "M7", "question_ids": ["Q4"], "origin": "internal", "channel": "local metrics and user acceptance", "target": "现有 100% 指标与实际缺漏", "decision_use": "重写质量合同", "priority": "high", "access_status": "searched"},
+    {"id": "M8", "question_ids": ["Q4"], "origin": "external", "channel": "research papers", "target": "长上下文位置退化与长篇共指限制", "decision_use": "限定可承诺范围", "priority": "high", "access_status": "searched"},
+    {"id": "M9", "question_ids": ["Q5"], "origin": "internal", "channel": "local frontend and API", "target": "拖动释放、编辑接口和面板布局", "decision_use": "设计交互改造", "priority": "medium", "access_status": "searched"},
+    {"id": "M10", "question_ids": ["Q5"], "origin": "external", "channel": "official component documentation", "target": "3d-force-graph 拖动与导航控制", "decision_use": "验证实现可行性", "priority": "medium", "access_status": "searched"}
+  ],
+  "sources": [
+    {"id": "S1", "origin": "internal", "title": "《西游记》实际数据库诊断", "location": "local:novel_atlas.db/book/7", "source_type": "test-observation", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "直接反映当前全书分析结果", "limitations": "只覆盖当前版本和当前模型结果", "retrieval_method": "只读查询事件、实体、地点、时间边和候选合并记录", "observed_content": "1049 个事件中 792 个时间类型未知；石猴出世排第 26；陈玄奘单一实体的首个带地点事件位于第 47 回；全书只有 90 个事件带地点", "direct": true, "independence_group": "local-data"},
+    {"id": "S2", "origin": "internal", "title": "事件入库与时间重排实现", "location": "app/pipeline.py;app/consolidation.py", "source_type": "internal-artifact", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "直接解释故事时间错排", "limitations": "代码行为还受模型输入影响", "retrieval_method": "读取事件顺序计算和 recompute_chronology", "observed_content": "模型给出的数值顺序被写入全局故事顺序，随后用贪心降序重排并压缩为连续名次", "direct": true, "independence_group": "local-code"},
+    {"id": "S3", "origin": "internal", "title": "人物合并与主角行程筛选实现", "location": "app/consolidation.py;app/main.py", "source_type": "internal-artifact", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "直接解释别名分裂和地图起点", "limitations": "无法单独衡量抽取召回率", "retrieval_method": "读取 merge_entities 和 journey_events 生成逻辑", "observed_content": "自动主角按单一实体编号筛选事件；玄奘、陈玄奘、唐僧仍是三个实体；合并实现会迁移记录后删除旧实体", "direct": true, "independence_group": "local-code"},
+    {"id": "S4", "origin": "internal", "title": "关系图拖动与地图显隐实现", "location": "static/app.js;static/styles.css", "source_type": "internal-artifact", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "直接解释拖动回弹和节点消失", "limitations": "可用性仍需用户测试", "retrieval_method": "读取 onNodeDragEnd、地图焦点窗口和 far 样式", "observed_content": "拖动结束会取消固定坐标并重新加热全图；焦点外节点透明度被设为零且不可交互", "direct": true, "independence_group": "local-code"},
+    {"id": "S5", "origin": "internal", "title": "用户实测截图与反馈", "location": "conversation:2026-08-24", "source_type": "behavioral-data", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "直接证明现有结果没有通过用户验收", "limitations": "属于单位用户场景，后续仍需覆盖更多书和更多任务", "retrieval_method": "检查用户提供的时间线和地图截图", "observed_content": "用户发现石猴出世错位、地图从中段开始、节点消失、重复审核难以人工判断和拖动体验不自然", "direct": true, "independence_group": "user-validation"},
+    {"id": "S6", "origin": "external", "title": "BookNLP official repository", "location": "https://github.com/booknlp/booknlp", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "提供长篇人物指代与名字聚类的成熟实现及限制", "limitations": "以英文文学文本为主要场景，不能直接替代中文小说测试", "retrieval_method": "阅读官方仓库中关于书长共指和保守名字聚类的说明", "observed_content": "官方说明认为书长共指仍是开放问题，完整共指会过度合并，默认采用更保守的名字聚类", "direct": true, "independence_group": "booknlp"},
+    {"id": "S7", "origin": "external", "title": "Large Language Models Cannot Self-Correct Reasoning Yet", "location": "https://openreview.net/forum?id=IkmD3fKBPQ", "source_type": "primary-research", "date": "2024-01-01", "accessed_at": "2026-08-24", "applicability": "评估同一模型无外部反馈自我复核的可靠性", "limitations": "研究对象不是小说实体归一专用系统", "retrieval_method": "阅读公开评审页面和论文结论", "observed_content": "在缺少外部反馈时，语言模型的自我纠错可能降低推理表现", "direct": true, "independence_group": "openreview"},
+    {"id": "S8", "origin": "external", "title": "TimeML official site", "location": "https://timeml.github.io/site/index.html", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "提供事件、时间表达和时间关系的结构化表达参考", "limitations": "规范本身不解决小说叙事中的所有隐含时间", "retrieval_method": "阅读官方规范概览", "observed_content": "TimeML 将事件、时间表达以及事件之间的时间关系分开建模", "direct": true, "independence_group": "timeml"},
+    {"id": "S9", "origin": "external", "title": "Lost in the Middle", "location": "https://aclanthology.org/2024.tacl-1.9.pdf", "source_type": "primary-research", "date": "2024-01-01", "accessed_at": "2026-08-24", "applicability": "解释把整部长文一次送入模型不能保证完整读取", "limitations": "评测任务与中文小说知识抽取并不完全相同", "retrieval_method": "阅读 ACL Anthology 论文", "observed_content": "模型在相关信息位于长上下文中部时表现经常下降", "direct": true, "independence_group": "tacl"},
+    {"id": "S10", "origin": "external", "title": "World Anvil Chronicles", "location": "https://www.worldanvil.com/features/chronicles", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "提供地图、地点和时间线一体化交互参考", "limitations": "产品页面不公开底层抽取方法", "retrieval_method": "阅读官方功能说明", "observed_content": "事件可以与地图位置相连，点击事件能展示地图位置，地点也能汇总相关事件", "direct": true, "independence_group": "world-anvil"},
+    {"id": "S11", "origin": "external", "title": "3d-force-graph official README", "location": "https://github.com/vasturiano/3d-force-graph/blob/master/README.md", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "确认节点拖动、导航开关和模拟重热可以分别控制", "limitations": "组件能力不等于完成的交互设计", "retrieval_method": "阅读官方 API 文档", "observed_content": "组件提供 onNodeDrag、onNodeDragEnd、导航控制和重新加热模拟接口", "direct": true, "independence_group": "3d-force-graph"},
+    {"id": "S12", "origin": "external", "title": "Project Gutenberg Chinese classics catalog", "location": "https://www.gutenberg.org/ebooks/23962;https://www.gutenberg.org/ebooks/23863;https://www.gutenberg.org/ebooks/24264;https://www.gutenberg.org/ebooks/23950", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "提供《西游记》《水浒传》《红楼梦》《三国演义》的公开真实文本测试集", "limitations": "美国公版状态不能自动代表其他地区的版权状态", "retrieval_method": "核对 Project Gutenberg 作品页面", "observed_content": "四部长篇中文古典小说均有可获取的电子文本页面", "direct": true, "independence_group": "gutenberg"},
+    {"id": "SL-adjacent", "origin": "external", "title": "相邻方案检索记录", "location": "tool:web-search/BookNLP-long-book-coreference", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录人物聚类相邻方案检索", "limitations": "限定公开英文检索", "retrieval_method": "关键词检索后打开官方仓库", "observed_content": "找到 BookNLP 近似方案", "direct": true, "independence_group": "search-adjacent"},
+    {"id": "SL-failure", "origin": "external", "title": "失败模式检索记录", "location": "tool:web-search/llm-self-correction-without-feedback", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录自动自审失败模式检索", "limitations": "不覆盖所有模型和提示方式", "retrieval_method": "关键词检索后打开公开评审论文", "observed_content": "找到无外部反馈自纠可能退化的证据", "direct": true, "independence_group": "search-failure"},
+    {"id": "SL-mechanism", "origin": "external", "title": "机制检索记录", "location": "tool:web-search/timeml-temporal-relation", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录时间关系机制检索", "limitations": "不包含中文小说专用扩展", "retrieval_method": "关键词检索后打开官方规范", "observed_content": "找到事件、时间表达和时间关系的分层机制", "direct": true, "independence_group": "search-mechanism"},
+    {"id": "SL-problem", "origin": "external", "title": "问题定义检索记录", "location": "tool:web-search/lost-in-the-middle", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录超长文本完整读取问题检索", "limitations": "研究任务与小说抽取不同", "retrieval_method": "关键词检索后打开 ACL Anthology 论文", "observed_content": "找到长上下文中部信息利用下降的直接研究", "direct": true, "independence_group": "search-problem"},
+    {"id": "SL-product", "origin": "external", "title": "产品检索记录", "location": "tool:web-search/world-anvil-map-timeline", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录成熟地图时间线产品检索", "limitations": "只评估公开功能", "retrieval_method": "关键词检索后打开官方产品页", "observed_content": "找到地图、时间线和地点事件联动产品", "direct": true, "independence_group": "search-product"},
+    {"id": "SL-research", "origin": "external", "title": "研究与测试材料检索记录", "location": "tool:web-search/gutenberg-chinese-classics", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "记录真实长篇测试材料检索", "limitations": "只覆盖四部古典小说", "retrieval_method": "作品名检索后核对官方目录", "observed_content": "找到四部真实长篇中文小说的官方电子文本页", "direct": true, "independence_group": "search-research"}
+  ],
+  "claims": [
+    {"id": "C1", "statement": "石猴出世错排源于模型数值顺序直接入库，再经过不可靠的贪心全局重排", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S1", "S2"], "contradict_source_ids": [], "falsifier": "替换相同数据库和代码后，石猴出世仍能稳定排在首项且不存在顺序环"},
+    {"id": "C2", "statement": "地图从第四十七回附近开始，主要由唐僧别名分裂和按单一实体编号筛选行程共同造成", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S1", "S3"], "contradict_source_ids": [], "falsifier": "合并三个别名后首个带地点事件仍从第四十七回开始，或当前筛选没有按实体编号过滤"},
+    {"id": "C3", "statement": "地图节点消失是焦点外节点被设为完全透明的预期代码行为", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S4", "S5"], "contradict_source_ids": [], "falsifier": "焦点外节点仍保持可见和可交互"},
+    {"id": "C4", "statement": "同一模型自己问自己可以作为一票复核，但缺少原文证据和确定性冲突规则时不能负责最终自动合并", "kind": "inference", "impact": "high", "confidence": "high", "support_source_ids": ["S6", "S7"], "contradict_source_ids": [], "falsifier": "在真实长篇金标准上，纯自审方案经过重复试验仍达到零误合并且显著优于证据约束方案"},
+    {"id": "C5", "statement": "当前 100% 证据覆盖率不能证明没有遗漏，也不能证明语义判断全部正确", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S1", "S5", "S9"], "contradict_source_ids": [], "falsifier": "该指标同时统计全部应抽取事实并由独立金标准证明零漏错"},
+    {"id": "C6", "statement": "继续修补页面无法消除实体、时间和行程数据层的共同根因，应当转向语义数据重构", "kind": "inference", "impact": "high", "confidence": "high", "support_source_ids": ["S1", "S2", "S3", "S4", "S5"], "contradict_source_ids": [], "falsifier": "仅修改前端即可让同一数据库通过实体、时间、行程三类金标准测试"}
+  ],
+  "assumptions": [
+    {"id": "A1", "statement": "用户接受把百分之百承诺限定为来源覆盖、证据追溯、缺口显式和变更可回滚", "critical": true, "status": "untested", "decision_impact": "若用户坚持任意小说语义零漏错的绝对保证，项目无法诚实验收", "falsifier": "用户明确拒绝可测量的质量合同并要求绝对语义保证", "support_source_ids": [], "contradict_source_ids": []},
+    {"id": "A2", "statement": "自动人物归一优先避免误合并，未达到门槛的候选保留为待定不会影响基本阅读", "critical": true, "status": "supported", "decision_impact": "若误拆比误合并更不可接受，需要调整自动判定门槛", "falsifier": "用户测试证明待定别名比误合并造成更严重的主线断裂", "support_source_ids": ["S5", "S6"], "contradict_source_ids": []}
+  ],
+  "search_branches": [
+    {"name": "adjacent", "status": "executed", "reason": "", "round_ids": ["R-adjacent"]},
+    {"name": "code", "status": "not_applicable", "reason": "本地代码已经直接审计，外部代码检索不会改变当前根因判断", "round_ids": []},
+    {"name": "failure", "status": "executed", "reason": "", "round_ids": ["R-failure"]},
+    {"name": "mechanism", "status": "executed", "reason": "", "round_ids": ["R-mechanism"]},
+    {"name": "patent", "status": "not_applicable", "reason": "本轮不主张专利新颖性，也不做法律清查", "round_ids": []},
+    {"name": "problem", "status": "executed", "reason": "", "round_ids": ["R-problem"]},
+    {"name": "product", "status": "executed", "reason": "", "round_ids": ["R-product"]},
+    {"name": "research", "status": "executed", "reason": "", "round_ids": ["R-research"]}
+  ],
+  "search_rounds": [
+    {"id": "R-adjacent", "branch": "adjacent", "query": "BookNLP long book coreference entity clustering", "channel": "web search and official repository", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": ["K1"], "evidence_source_ids": ["S6"], "search_log_source_id": "SL-adjacent", "new_high_similarity_count": 1, "new_decision_evidence_count": 1},
+    {"id": "R-failure", "branch": "failure", "query": "LLM intrinsic self correction without feedback", "channel": "web search and OpenReview", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": [], "evidence_source_ids": ["S7"], "search_log_source_id": "SL-failure", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-mechanism", "branch": "mechanism", "query": "TimeML temporal relation specification", "channel": "web search and official specification", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": ["K2"], "evidence_source_ids": ["S8"], "search_log_source_id": "SL-mechanism", "new_high_similarity_count": 1, "new_decision_evidence_count": 1},
+    {"id": "R-problem", "branch": "problem", "query": "long context lost in the middle paper", "channel": "web search and ACL Anthology", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": [], "evidence_source_ids": ["S9"], "search_log_source_id": "SL-problem", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-product", "branch": "product", "query": "interactive map timeline linked events World Anvil", "channel": "web search and official product page", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": ["K3"], "evidence_source_ids": ["S10", "S11"], "search_log_source_id": "SL-product", "new_high_similarity_count": 1, "new_decision_evidence_count": 2},
+    {"id": "R-research", "branch": "research", "query": "Project Gutenberg Chinese classics full text", "channel": "web search and official catalog", "date": "2026-08-24", "discovery_mode": "citation-chain", "new_candidate_ids": ["K4"], "evidence_source_ids": ["S12"], "search_log_source_id": "SL-research", "new_high_similarity_count": 0, "new_decision_evidence_count": 1}
+  ],
+  "candidates": [
+    {"id": "K1", "name": "BookNLP", "class": "near", "verified": true, "similarity": "长篇人物名字聚类与共指", "difference": "没有本项目的中文证据图谱、地图和可回滚实体决策", "source_ids": ["S6"]},
+    {"id": "K2", "name": "TimeML", "class": "adjacent", "verified": true, "similarity": "事件与时间关系建模", "difference": "属于标注规范，不提供小说应用和抽取流水线", "source_ids": ["S8"]},
+    {"id": "K3", "name": "World Anvil Chronicles", "class": "near", "verified": true, "similarity": "地图、时间线、地点和事件联动", "difference": "面向人工世界构建，不提供本项目的小说自动抽取与证据审核", "source_ids": ["S10"]},
+    {"id": "K4", "name": "Project Gutenberg 四部中文长篇", "class": "adjacent", "verified": true, "similarity": "真实非结构化长篇文本", "difference": "属于测试材料，不是竞争产品", "source_ids": ["S12"]}
+  ],
+  "novelty": {
+    "applicable": true,
+    "applicability_reason": "用户要求参考成熟项目并决定重构路线",
+    "assessment": "near-match-found",
+    "stop_reason": "decisive-match",
+    "saturation_round_ids": ["R-adjacent", "R-product", "R-research"],
+    "languages": ["zh", "en"],
+    "regions": ["global"],
+    "access_gaps": [{"resource": "商业产品私有算法和未公开专利", "impact": "不会改变当前本地根因，但限制开放世界查重结论", "critical": false}],
+    "scope_statement": "限定公开资料中的长篇人物处理、时间关系、地图时间线产品和中文测试文本"
+  },
+  "perspectives": [
+    {"id": "P1", "lens": "数据与算法", "producer": "lead:data-audit", "producer_type": "lead-agent", "producer_reference": "local-code-database-audit", "independent": false, "context_isolated": false, "source_ids": ["S1", "S2", "S3", "S4"], "findings": ["三个用户可见问题均有可复现的数据或代码根因", "当前合并和排序方式不适合继续扩展"], "limitations": "由主审计者执行，缺少独立复现"},
+    {"id": "P2", "lens": "用户验收", "producer": "user:product-owner", "producer_type": "human", "producer_reference": "conversation-2026-08-24", "independent": false, "context_isolated": false, "source_ids": ["S5"], "findings": ["时间线和地图已经影响阅读理解", "人工无法判断缺少证据的重复候选"], "limitations": "当前只有一位用户的实测反馈"},
+    {"id": "P3", "lens": "外部研究与产品", "producer": "lead:external-evidence-review", "producer_type": "lead-agent", "producer_reference": "public-source-review-2026-08-24", "independent": false, "context_isolated": false, "source_ids": ["S6", "S7", "S8", "S9", "S10", "S11", "S12"], "findings": ["长篇共指和长上下文利用都存在公开限制", "时间关系偏序和地图时间线联动有成熟参考"], "limitations": "没有引入外部专家或独立代理评审"}
+  ],
+  "real_world_validations": [
+    {"id": "V1", "role": "产品所有者与实际使用者", "participant_reference": "user-conversation-2026-08-24", "method": "在运行中的《西游记》完整分析结果上检查时间线、地图、重复候选和关系图交互", "conducted_at": "2026-08-24", "outcome": "未通过验收，发现故事时间错序、行程缺漏、节点消失、重复候选无法判断和拖动体验问题", "limitations": "属于单人验收，后续还需四本真实长篇的基准测试", "status": "completed", "evidence_source_ids": ["S5"]}
+  ],
+  "alignment_questions": [],
+  "recommendation": {
+    "verdict": "pivot",
+    "action": "保留原文和证据底座，重建可回滚人物归一、时间关系图和专用行程层；小样本通过金标准后再进行整本处理",
+    "rationale": "当前问题跨越实体、时间、地点和界面四层，继续页面修补会掩盖数据缺口；现有证据链仍可复用，因此无需推倒全部成果",
+    "strongest_counterevidence": "新的语义层会增加数据结构、测试样本和一次性重算工作量",
+    "minimum_test": "先用《西游记》开篇、取经开始、中段和后段代表章节制作人工金标准，验证实体误合并、时间环、行程缺口和证据定位",
+    "failure_response": "任何核心门槛失败时停止整本调用，修正规则和提示词后只重跑失败样本",
+    "reversal_condition": "若小样本证明新的实体、时间或行程层没有显著优于现有结果，则恢复只读的 1.2.0 基线并重新选型",
+    "support_source_ids": ["S1", "S2", "S3", "S4", "S5", "S6", "S8", "S9", "S10"],
+    "counter_source_ids": ["S5"]
+  },
+  "review_triggers": ["用户确认重构计划", "人工金标准完成", "任一整书核心指标未达门槛", "模型或价格策略变化", "数据迁移准备执行"]
+}

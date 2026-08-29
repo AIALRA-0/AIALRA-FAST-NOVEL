@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "product": "小说证据图谱",
+  "release": "2.9.3-rc.1",
+  "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
+  "source_commit": "local-51d86ba-validated;public-clean-root-candidate-prepared",
+  "active_objective": "发布 2.9.3 区域几何、增量分析与审核工作台候选版",
+  "contracts": {
+    "fact_source": "原文证据",
+    "chronology_source": "overview.story_map_steps",
+    "map_2d_source": "overview.story_map_steps",
+    "map_3d_source": "overview.story_map_steps",
+    "unknown_policy": "未知不补猜",
+    "public_data_policy": "公开仓库和未登录访问不含全文；Authentik后的私有书库允许来源与许可完整的开放作品"
+  },
+  "quality_gate": {
+    "unit_tests": "passed:146;skipped:1-windows-dpapi-protected-path-only",
+    "javascript_syntax": "passed",
+    "browser_flows": "passed:12;skipped:1-legacy-thousand-step-full-book-fixture;12-open-work-library-flow-passed;3d-relationship-hover-passed;story-scope-passed",
+    "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
+    "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
+    "map_region_naming": "passed:no-numbered-topology-placeholder;external-label-anchor-and-connector",
+    "map_region_overlap": "passed:occupancy-union-buffer-corridor;node-label-child-containment;deterministic-fallback;shapely-2.1.2",
+    "map_region_volume": "passed:closed-top-bottom-side-shells;parent-child-volume-containment;shell-section-current-layer",
+    "narrative_partition": "passed:reversible-units-and-worlds;rename-boundary-move-split-merge-restore;single-library-book",
+    "incremental_update": "passed:append-insert-modify-delete-rename-reorder;unchanged-segments-reused;human-edits-preserved;evidence-reanchored",
+    "review_center": "passed:identity-relationship-location-time-actionable-tasks;resolved-history;no-zero-warning",
+    "semantic_editor": "passed:entity-event-claim-place-relation-world-note-entry-and-story-structure-fields",
+    "ui_punctuation": "passed:authored-Chinese-interface-copy-has-no-full-stop;evidence-unchanged",
+    "playback_speed": "passed:0.5x-1x-1.5x-2x-persisted-without-step-reset",
+    "spoiler_progress": "passed:visible-edit-button-removed;double-click-and-keyboard-edit-retained",
+    "real_corpus_import": "passed:12-open-works;1868-segments;142-analyzed-segments;6146-real-corpus-evidence-links;0-exact-quote-misses;0-failed-jobs;cross-language-txt-html-epub",
+    "formal_quality_corpus": "defined:12-works;25-cases-each;300-total;60-sealed-holdouts;5-direct-7-proxy",
+    "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
+  },
+  "publication": {
+    "github": "v2.9.3-rc.1-clean-root-candidate;old-main-retained;publication-gate-passed",
+    "github_commit": "clean-root-release-branch-prepared-from-local-51d86ba",
+    "github_release": "https://github.com/ExampleOrg-0/ExampleOrg-FAST-NOVEL/releases/tag/v2.9.3-rc.1",
+    "deployment": "vps-running-2.9.3-rc.1;container-healthy;readyz-version-verified;database-volume-preserved",
+    "hostname": "novel.aialra.online",
+    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-roundtrip-requires-user-session",
+    "rollback": "pre-2.9.3-data-backup-at-20260829T183405Z;previous-2.9.2-image-and-release-retained"
+  },
+  "last_updated": "2026-08-29"
+}
