@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.4-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "local-2.9.4-rc.1-validation-in-progress;public-2.9.3-clean-root-retained",
+  "source_commit": "local-c90cf487-plus-final-state-sync;public-clean-root-2bab3ce9",
   "active_objective": "发布 2.9.4 人工验收、报告语言与地图可读性候选版",
   "contracts": {
     "fact_source": "原文证据",
@@ -16,7 +16,7 @@
   "quality_gate": {
     "unit_tests": "passed:149;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
-    "github_actions": "passed:quality-gate-run-33271299183;python-browser-container",
+    "github_actions": "passed:quality-gate-run-33281784430;python-browser-container",
     "browser_flows": "passed:11;skipped:3-local-extended-fixtures;12-open-work-library-flow-passed;3d-relationship-hover-passed;story-scope-passed;human-acceptance-language-concept-layout-passed",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
@@ -40,13 +40,13 @@
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
   },
   "publication": {
-    "github": "2.9.4-rc.1-pending-exact-publication-gate;v2.9.3-rc.1-retained",
-    "github_commit": "release/2.9.3-rc.1-clean@1955ba85aec2d8df7dd2a65c7d81239b3a1ac2b3",
-    "github_release": "v2.9.3-rc.1 retained",
-    "deployment": "vps-running-clean-root-1955ba8;image-sha256-41f7b59c6eee;container-healthy;readyz-version-verified;database-volume-preserved",
+    "github": "2.9.4-rc.1-published-from-exact-gated-clean-root;default-branch-release/2.9.4-rc.1-clean-final3",
+    "github_commit": "release/2.9.4-rc.1-clean-final3@2bab3ce9c2046aa1131d8694425f6a178dfcee4b",
+    "github_release": "v2.9.4-rc.1 prerelease",
+    "deployment": "vps-running-clean-root-2bab3ce;image-sha256-e56dd9dcf7f2;container-healthy;readyz-2.9.4-rc.1;database-volume-preserved",
     "hostname": "Authentik-protected deployment",
-    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-user-session-roundtrip-to-private-library-verified",
-    "rollback": "pre-final-data-backup-at-20260829T194013Z;pre-final-2.9.3-image-and-previous-2.9.2-image-release-retained"
+    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-user-session-roundtrip-to-private-library-and-2.9.4-ui-verified",
+    "rollback": "pre-2.9.4-data-backup-at-20260829T235344Z;2.9.3-release-directory-and-image-retained"
   },
   "last_updated": "2026-08-29"
 }
