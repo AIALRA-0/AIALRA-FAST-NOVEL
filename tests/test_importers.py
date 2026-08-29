@@ -7,7 +7,7 @@ from io import BytesIO
 
 import pytest
 
-from app.importers import ImportErrorDetail, parse_book
+from app.importers import ImportErrorDetail, decode_text, parse_book
 
 
 def make_epub(extra_files: dict[str, bytes] | None = None) -> bytes:
@@ -129,6 +129,28 @@ def test_html_and_docx_import_visible_text() -> None:
     assert docx.title == "文档小说"
     assert docx.author == "测试作者"
     assert "陆昭离开雾港" in docx.segments[0].text
+
+
+def test_html_honors_declared_shift_jis_before_permissive_chinese_fallback() -> None:
+    """青空文库的 Shift_JIS 声明必须阻止 GB18030 把日文静默解成乱码。"""
+
+    source = """<?xml version="1.0" encoding="Shift_JIS"?>
+    <html><head><meta http-equiv="Content-Type" content="text/html;charset=Shift_JIS" />
+    <title>銀河鉄道の夜</title></head><body><h1>第一章</h1><p>ジョバンニは銀河を見上げた。</p></body></html>
+    """.encode("cp932")
+    parsed = parse_book("銀河鉄道の夜.html", source)
+    assert parsed.title == "第一章"
+    full_text = "\n".join(segment.text for segment in parsed.segments)
+    assert "ジョバンニは銀河を見上げた" in full_text
+    assert "揤" not in full_text
+
+
+def test_unicode_bom_takes_precedence_over_conflicting_charset_declaration() -> None:
+    """明确的 Unicode BOM 必须优先于正文中互相冲突的编码声明。"""
+
+    source = '<?xml version="1.0" encoding="Shift_JIS"?><p>左岸</p>'
+    content = b"\xff\xfe" + source.encode("utf-16-le")
+    assert decode_text(content) == source
 
 
 def test_classical_circle_numeral_chapter() -> None:

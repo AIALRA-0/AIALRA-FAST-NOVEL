@@ -3,8 +3,8 @@
   "product": "小说证据图谱",
   "release": "2.9.2-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "local-candidate-awaiting-release-commit",
-  "active_objective": "交付区域随编年联动、真实地点区域命名、区域外标签、四档播放速度和十二部跨文体开放语料",
+  "source_commit": "a49d1ab-release-baseline-plus-final-state-docs",
+  "active_objective": "完成 2.9.2 候选版发布，并以人工金标准继续验证跨文体内容准确率",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -14,25 +14,26 @@
     "public_data_policy": "公开仓库和未登录访问不含全文；Authentik后的私有书库允许来源与许可完整的开放作品"
   },
   "quality_gate": {
-    "unit_tests": "in-progress",
+    "unit_tests": "passed:136;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
-    "browser_flows": "in-progress",
+    "browser_flows": "passed:9;skipped:2-require-legacy-fully-analyzed-thousand-step-fixture;local-and-vps-tunnel",
+    "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
     "map_region_naming": "passed:no-numbered-topology-placeholder;external-label-anchor-and-connector",
     "playback_speed": "passed:0.5x-1x-1.5x-2x-persisted-without-step-reset",
     "spoiler_progress": "passed:visible-edit-button-removed;double-click-and-keyboard-edit-retained",
-    "real_corpus_import": "passed:12-open-works;1868-segments;cross-language-txt-html-epub",
+    "real_corpus_import": "passed:12-open-works;1868-segments;142-analyzed-segments;5973-real-corpus-evidence-links;0-failed-jobs;cross-language-txt-html-epub",
     "formal_quality_corpus": "defined:12-works;25-cases-each;300-total;60-sealed-holdouts;5-direct-7-proxy",
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
   },
   "publication": {
-    "github": "pending-v2.9.2-rc.1",
-    "github_commit": "pending",
-    "github_release": "pending",
-    "deployment": "vps-still-running-2.9.1-rc.2",
+    "github": "v2.9.2-rc.1-release-candidate",
+    "github_commit": "resolved-by-v2.9.2-rc.1-tag",
+    "github_release": "https://github.com/AIALRA-0/AIALRA-FAST-NOVEL/releases/tag/v2.9.2-rc.1",
+    "deployment": "vps-running-2.9.2-rc.1-release-a49d1ab",
     "hostname": "novel.aialra.online",
-    "authentication": "Authentik gateway",
-    "rollback": "2.9.1-rc.2-image-and-pre-deploy-data-backup-required"
+    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-roundtrip-requires-user-session",
+    "rollback": "pre-final-data-backup-at-20260829T033921Z-and-previous-release-retained"
   },
-  "last_updated": "2026-08-28"
+  "last_updated": "2026-08-29"
 }

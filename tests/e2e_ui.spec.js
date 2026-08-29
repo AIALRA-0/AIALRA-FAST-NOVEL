@@ -108,6 +108,28 @@ test("三层知识库可检索并在固定右栏显示证据、编辑和历史",
   expect(errors).toEqual([]);
 });
 
+test("切换书籍遇到慢接口时知识详情不会串到上一本书", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.route(/\/api\/books\/\d+\/concepts\?/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    await route.continue();
+  });
+
+  await page.locator("#book-select").selectOption({ label: "长夜十二城 · 120章大型压力演示" });
+  await page.locator('.nav-item[data-view="database"]').click();
+  await expect(page.locator(".concept-row")).toHaveCount(0);
+  await expect(page.locator("#view-panel")).toContainText("正在读取这本书的知识结构");
+
+  await expect(page.locator(".knowledge-workspace")).toBeVisible();
+  await page.locator("#entry-search").fill("核心危机");
+  const row = page.locator(".concept-row").filter({ hasText: "长夜十二城的核心危机" });
+  await expect(row).toHaveCount(1);
+  await row.click();
+  await expect(page.locator("#inspector-title")).toHaveText("长夜十二城的核心危机");
+  await expect(page.locator(".knowledge-claim")).toHaveCount(1);
+});
+
 test("真实长篇世界图保留全部节点并分级显示标签", async ({ page }) => {
   test.skip(!process.env.NOVEL_ATLAS_REAL_LONG, "需要本机真实长篇验收副本");
   const errors = [];
@@ -287,9 +309,19 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
 
   const bookButton = page.locator("#book-select").locator("xpath=..").locator(".select-box-button");
   await expect(bookButton).toBeVisible();
+  await page.locator("#book-select").evaluate((select) => {
+    for (let index = 0; index < 9; index += 1) {
+      const option = document.createElement("option");
+      option.value = `escape-regression-${index}`;
+      option.textContent = `长列表回归选项 ${index + 1}`;
+      select.appendChild(option);
+    }
+  });
   await bookButton.click();
   await expect(page.locator(".select-popover")).toBeVisible();
+  await expect(page.locator(".select-search")).toBeFocused();
   await page.keyboard.press("Escape");
+  await expect(page.locator(".select-popover")).toHaveCount(0);
 
   await page.locator("#progress-count").focus();
   await page.keyboard.press("Enter");

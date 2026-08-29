@@ -45,6 +45,11 @@ def test_real_public_domain_book_is_read_completely(filename: str, expected: dic
     assert all(segment.text and segment.chapter_title for segment in parsed.segments)
     assert all(segment.char_start < segment.char_end for segment in parsed.segments)
     assert all("Project Gutenberg" not in segment.text for segment in parsed.segments)
+    if filename == "aozora-galactic-railroad.html":
+        full_text = "\n".join(segment.text for segment in parsed.segments)
+        assert "銀河鉄道の夜" in full_text
+        assert "ジョバンニ" in full_text
+        assert "揤婥" not in full_text
 
 
 def test_real_corpus_covers_twelve_distinct_cross_genre_structures() -> None:

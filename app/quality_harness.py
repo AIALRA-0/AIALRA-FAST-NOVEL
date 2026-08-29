@@ -55,6 +55,7 @@ def _multi_entity_windows(
     connection: sqlite3.Connection,
     book_id: int,
     names_by_entity: dict[int, list[str]],
+    analyzed_ordinals: set[int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, dict[str, int]]]:
     """单次扫描全部目标名称，并合并同一段内互相重叠的证据窗口。"""
 
@@ -62,6 +63,8 @@ def _multi_entity_windows(
         "SELECT id, ordinal, chapter_title, text FROM segments WHERE book_id = ? ORDER BY ordinal",
         (book_id,),
     ).fetchall()
+    if analyzed_ordinals is not None:
+        segments = [segment for segment in segments if int(segment["ordinal"]) in analyzed_ordinals]
     windows: list[dict[str, Any]] = []
     stats = {
         entity_id: {"mention_count": 0, "scanned_segment_count": 0, "window_count": 0}
@@ -369,7 +372,11 @@ def repair_explicit_event_locations(connection: sqlite3.Connection, book_id: int
     return repaired
 
 
-def refresh_local_reviews(connection: sqlite3.Connection, book_id: int) -> dict[str, int]:
+def refresh_local_reviews(
+    connection: sqlite3.Connection,
+    book_id: int,
+    analyzed_ordinals: set[int] | None = None,
+) -> dict[str, int]:
     """用数据库事实建立初始复审状态，并给无地点事件记录可解释的沿用位置。"""
 
     repaired_relations = repair_explicit_named_relations(connection, book_id)
@@ -400,10 +407,14 @@ def refresh_local_reviews(connection: sqlite3.Connection, book_id: int) -> dict[
         ).fetchall()
         if row["entity_id"] is not None
     }
-    source_segment_count = int(connection.execute(
-        "SELECT COUNT(*) FROM segments WHERE book_id = ?",
-        (book_id,),
-    ).fetchone()[0])
+    source_segment_count = (
+        len(analyzed_ordinals)
+        if analyzed_ordinals is not None
+        else int(connection.execute(
+            "SELECT COUNT(*) FROM segments WHERE book_id = ?",
+            (book_id,),
+        ).fetchone()[0])
+    )
     existing_by_entity = {
         int(row["entity_id"]): row
         for row in connection.execute(
@@ -421,7 +432,10 @@ def refresh_local_reviews(connection: sqlite3.Connection, book_id: int) -> dict[
         )
         if entity_id not in connected_ids and not can_reuse_scan:
             scan_names[entity_id] = names
-    _, scan_stats = _multi_entity_windows(connection, book_id, scan_names) if scan_names else ([], {})
+    _, scan_stats = (
+        _multi_entity_windows(connection, book_id, scan_names, analyzed_ordinals)
+        if scan_names else ([], {})
+    )
     pending = 0
     for entity_id, names in names_by_entity.items():
         existing = existing_by_entity.get(entity_id)
@@ -547,6 +561,7 @@ def _payload_parts(
     connection: sqlite3.Connection,
     book_id: int,
     statuses: tuple[str, ...] = ("pending",),
+    analyzed_ordinals: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """一次扫描全部待审实体，共享重叠证据并拆成可控请求。"""
 
@@ -567,7 +582,7 @@ def _payload_parts(
         ).fetchall()
     ]
     target_names = {entity_id: names_by_entity.get(entity_id, []) for entity_id in pending_ids}
-    windows, _ = _multi_entity_windows(connection, book_id, target_names)
+    windows, _ = _multi_entity_windows(connection, book_id, target_names, analyzed_ordinals)
     parts: list[dict[str, Any]] = []
     current_windows: list[dict[str, Any]] = []
     current_target_ids: set[int] = set()
@@ -811,8 +826,25 @@ async def run_quality_harness(
     """运行本地检查和按需模型复审，返回门禁前的执行摘要。"""
 
     with transaction(settings.database_path) as connection:
-        local_summary = refresh_local_reviews(connection, book_id)
-        parts = _payload_parts(connection, book_id, ("pending", "ambiguous") if include_ambiguous else ("pending",))
+        analyzed_ordinals = {
+            int(row["ordinal"])
+            for row in connection.execute(
+                """
+                SELECT DISTINCT job_segment.ordinal
+                FROM analysis_job_segments job_segment
+                JOIN analysis_jobs job ON job.id = job_segment.job_id
+                WHERE job.book_id = ? AND job_segment.status = 'completed'
+                """,
+                (book_id,),
+            ).fetchall()
+        }
+        local_summary = refresh_local_reviews(connection, book_id, analyzed_ordinals)
+        parts = _payload_parts(
+            connection,
+            book_id,
+            ("pending", "ambiguous") if include_ambiguous else ("pending",),
+            analyzed_ordinals,
+        )
     groups = _group_parts(parts)
     parts_by_entity: dict[int, int] = defaultdict(int)
     for part in parts:
@@ -1036,7 +1068,7 @@ async def run_quality_harness(
                 returned.add(decision.entity_id)
     with transaction(settings.database_path) as connection:
         _persist_audit_decisions(connection, book_id, dict(parts_by_entity), decisions)
-        refresh_local_reviews(connection, book_id)
+        refresh_local_reviews(connection, book_id, analyzed_ordinals)
     return {
         **local_summary,
         "audit_groups": scheduled_groups,

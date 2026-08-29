@@ -110,7 +110,47 @@ def normalize_text(text: str) -> str:
 
 
 def decode_text(content: bytes) -> str:
-    """按常见中文文本编码依次解码。"""
+    """优先遵守 Unicode BOM，其次遵守文档声明，再尝试常见中文文本编码。"""
+
+    unicode_boms = (
+        (b"\xff\xfe\x00\x00", "utf-32"),
+        (b"\x00\x00\xfe\xff", "utf-32"),
+        (b"\xef\xbb\xbf", "utf-8-sig"),
+        (b"\xff\xfe", "utf-16"),
+        (b"\xfe\xff", "utf-16"),
+    )
+    for bom, encoding in unicode_boms:
+        if content.startswith(bom):
+            try:
+                return content.decode(encoding)
+            except UnicodeDecodeError as error:
+                raise ImportErrorDetail("Unicode BOM 与文本内容不匹配，请检查文件是否损坏") from error
+
+    header = content[:4_096].decode("ascii", errors="ignore")
+    declaration = re.search(
+        r"(?i)(?:encoding\s*=\s*[\"']|charset\s*=\s*[\"']?)([a-z0-9._-]+)",
+        header,
+    )
+    aliases = {
+        "utf8": "utf-8",
+        "utf-8": "utf-8",
+        "utf-8-sig": "utf-8-sig",
+        "gb2312": "gb18030",
+        "gbk": "gb18030",
+        "gb18030": "gb18030",
+        "shift_jis": "cp932",
+        "shift-jis": "cp932",
+        "sjis": "cp932",
+        "windows-31j": "cp932",
+        "cp932": "cp932",
+    }
+    if declaration is not None:
+        declared = aliases.get(declaration.group(1).lower())
+        if declared is not None:
+            try:
+                return content.decode(declared)
+            except UnicodeDecodeError:
+                pass
 
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:

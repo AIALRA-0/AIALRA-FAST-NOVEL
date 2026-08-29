@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main
 from app.db import initialize, transaction
-from app.quality_harness import refresh_local_reviews
+from app.quality_harness import _multi_entity_windows, refresh_local_reviews
 from app.semantic import recompute_chronology_dag
 
 
@@ -850,6 +850,24 @@ def test_connectivity_conflict_can_be_resolved_with_verified_manual_relation(tmp
         updated = next(item for item in overview["connectivity_reviews"] if item["entity_id"] == entity_id)
         assert updated["status"] == "connected"
         assert any(item["source_entity_id"] == entity_id and item["target_entity_id"] == target["id"] for item in overview["claims"])
+
+
+def test_connectivity_audit_only_scans_completed_analysis_segments(tmp_path: Path) -> None:
+    """局部分析的孤立节点复审不得读取尚未分析的后续章节。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        with transaction(main.settings.database_path) as connection:
+            unrestricted, _ = _multi_entity_windows(connection, book_id, {999_001: ["沈烬"]})
+            scoped, stats = _multi_entity_windows(
+                connection,
+                book_id,
+                {999_001: ["沈烬"]},
+                {0},
+            )
+        assert unrestricted
+        assert scoped == []
+        assert stats[999_001]["mention_count"] == 0
 
 
 def test_large_demo_has_terminal_relationship_and_location_review_states(tmp_path: Path) -> None:

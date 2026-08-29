@@ -24,6 +24,7 @@ const state = {
   narrativeMemory: null,
   knowledgeFacets: null,
   concepts: [],
+  conceptsBookId: null,
   systems: [],
   mapStep: 0,
   mapTimer: null,
@@ -619,6 +620,13 @@ function renderProviderOptions() {
 async function loadOverview(throughSegment = null, silent = false) {
   if (!state.bookId) return;
   const requestedBookId = state.bookId;
+  if (Number(state.conceptsBookId) !== Number(requestedBookId)) {
+    state.concepts = [];
+    state.knowledgeFacets = null;
+    state.conceptsBookId = null;
+    state.inspectorRequestSerial += 1;
+    if (state.inspectorTarget?.type === "concept") closeInspector();
+  }
   if (!silent) $("#view-panel").innerHTML = '<div class="loading">正在整理证据与视图…</div>';
   const query = throughSegment === null ? "" : `?through_segment=${throughSegment}`;
   const [overview, benchmarks, benchmarkCandidates, mapLayout, narrativeMemory, knowledgeFacets, concepts, systems] = await Promise.all([
@@ -639,6 +647,7 @@ async function loadOverview(throughSegment = null, silent = false) {
   state.narrativeMemory = narrativeMemory;
   state.knowledgeFacets = knowledgeFacets;
   state.concepts = concepts;
+  state.conceptsBookId = requestedBookId;
   state.systems = systems;
   $("#systems-nav").hidden = !systems.some((system) => system.status === "active" && system.nodes?.length);
   configureProgress();
@@ -3220,6 +3229,10 @@ async function archiveSystemRelationFromUi(relationId) {
 }
 
 function renderDatabase(query = "", category = "all") {
+  if (Number(state.conceptsBookId) !== Number(state.bookId)) {
+    $("#view-panel").innerHTML = panelHead("知识库", "正在切换到当前作品") + '<div class="loading">正在读取这本书的知识结构…</div>';
+    return;
+  }
   const facets = state.knowledgeFacets || { categories: [], concept_count: 0, evidence_link_count: 0, needs_classification: 0 };
   const concepts = (state.concepts || []).filter((concept) => {
     if (concept.scheme === "system") return false;
@@ -3266,6 +3279,8 @@ function renderDatabase(query = "", category = "all") {
 }
 
 async function openConceptDetails(conceptId) {
+  const requestedBookId = Number(state.bookId);
+  if (Number(state.conceptsBookId) !== requestedBookId) return;
   const concept = (state.concepts || []).find((item) => Number(item.id) === Number(conceptId));
   if (!concept) return;
   state.inspectorTarget = { type: "concept", id: Number(conceptId) };
@@ -3279,10 +3294,10 @@ async function openConceptDetails(conceptId) {
   $("#scrim").hidden = !window.matchMedia("(max-width: 1100px)").matches;
   try {
     const [claims, revisions] = await Promise.all([
-      api(`/api/books/${state.bookId}/knowledge-claims?concept_id=${conceptId}`),
-      api(`/api/books/${state.bookId}/knowledge-revisions?target_type=concept&target_id=${conceptId}&limit=20`),
+      api(`/api/books/${requestedBookId}/knowledge-claims?concept_id=${conceptId}`),
+      api(`/api/books/${requestedBookId}/knowledge-revisions?target_type=concept&target_id=${conceptId}&limit=20`),
     ]);
-    if (requestSerial !== state.inspectorRequestSerial) return;
+    if (requestSerial !== state.inspectorRequestSerial || requestedBookId !== Number(state.bookId) || requestedBookId !== Number(state.conceptsBookId)) return;
     const sourceOptions = state.overview.segments.map((segment) => `<option value="${segment.id}">${escapeHtml(segment.chapter_title)}</option>`).join("");
     const claimCards = claims.map((claim) => {
       const value = typeof claim.value === "string" ? claim.value : JSON.stringify(claim.value, null, 2);
@@ -3307,7 +3322,7 @@ async function openConceptDetails(conceptId) {
       const value = $("#knowledge-claim-value").value.trim();
       if (!predicate || !value) return toast("请填写属性和值。", true);
       try {
-        await api(`/api/books/${state.bookId}/knowledge-claims`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concept_id: conceptId, predicate, value, source_kind: sourceKind, confidence: sourceKind === "original_text" ? 0.9 : 1, segment_id: sourceKind === "original_text" ? Number($("#knowledge-claim-segment").value) : null, evidence_quote: sourceKind === "original_text" ? $("#knowledge-claim-quote").value : "", qualifiers: {} }) });
+        await api(`/api/books/${requestedBookId}/knowledge-claims`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ concept_id: conceptId, predicate, value, source_kind: sourceKind, confidence: sourceKind === "original_text" ? 0.9 : 1, segment_id: sourceKind === "original_text" ? Number($("#knowledge-claim-segment").value) : null, evidence_quote: sourceKind === "original_text" ? $("#knowledge-claim-quote").value : "", qualifiers: {} }) });
         await loadOverview(Number($("#progress-slider").value), true); openConceptDetails(conceptId);
       } catch (error) { toast(error.message, true); }
     });
@@ -3334,7 +3349,7 @@ async function openConceptDetails(conceptId) {
         openConceptDetails(conceptId);
       } catch (error) { toast(error.message, true); }
     }));
-  } catch (error) { if (requestSerial === state.inspectorRequestSerial) $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(error.message)}</p>`; }
+  } catch (error) { if (requestSerial === state.inspectorRequestSerial && requestedBookId === Number(state.bookId)) $("#inspector-body").innerHTML = `<p class="detail-summary">${escapeHtml(error.message)}</p>`; }
 }
 
 const collaborationStatusLabels = {
