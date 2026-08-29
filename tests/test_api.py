@@ -27,10 +27,10 @@ def test_health_and_readiness_endpoints(tmp_path: Path) -> None:
 
     with client_for(tmp_path) as client:
         health = client.get("/healthz").json()
-        assert health == {"status": "ok", "version": "2.9.1-rc.2"}
+        assert health == {"status": "ok", "version": "2.9.2-rc.1"}
         readiness = client.get("/readyz")
         assert readiness.status_code == 200
-        assert readiness.json() == {"status": "ready", "version": "2.9.1-rc.2"}
+        assert readiness.json() == {"status": "ready", "version": "2.9.2-rc.1"}
 
 
 def test_relation_direction_can_be_reviewed_without_creating_a_second_fact(tmp_path: Path) -> None:
@@ -187,7 +187,7 @@ def test_v27_atlas_narrative_and_knowledge_endpoints_share_existing_facts(tmp_pa
         assert all("evidence_count" in item for item in concepts)
 
 
-def test_v291_map_layout_exposes_bounds_lod_and_all_inferred_regions(tmp_path: Path) -> None:
+def test_v292_map_layout_exposes_named_regions_and_external_label_geometry(tmp_path: Path) -> None:
     """2.9 atlas keeps every real node while deriving bounded levels of detail."""
 
     with client_for(tmp_path) as client:
@@ -196,7 +196,7 @@ def test_v291_map_layout_exposes_bounds_lod_and_all_inferred_regions(tmp_path: P
             f"/api/books/{book_id}/map-layout",
             params={"through_segment": 119, "detail_level": "low", "focus": "current"},
         ).json()
-        assert atlas["layout_version"] == "semantic-atlas-v2.9.1-lod4"
+        assert atlas["layout_version"] == "semantic-atlas-v2.9.2-lod5"
         assert atlas["requested_detail_level"] == "low"
         assert atlas["requested_focus"] == "current"
         assert atlas["world_bounds"]["width"] > 0
@@ -204,6 +204,10 @@ def test_v291_map_layout_exposes_bounds_lod_and_all_inferred_regions(tmp_path: P
         assert set(atlas["detail_levels"]) == {"low", "medium", "high"}
         assert atlas["detail_levels"]["high"]["node_ids"] == [item["id"] for item in atlas["nodes"]]
         assert all(item["display_policy"] == "all_views" for item in atlas["regions"])
+        assert all(item["display_name"] for item in atlas["regions"])
+        assert all("故事拓扑片区" not in item["display_name"] for item in atlas["regions"])
+        assert all(item["representative_node_ids"] for item in atlas["regions"])
+        assert all(item["label_anchor"] and item["label_connector"] for item in atlas["regions"])
         assert atlas["region_coverage"]["visible_region_count"] == len(atlas["regions"])
         assert atlas["region_coverage"]["total_place_count"] == len(atlas["nodes"])
         assert "unassigned_node_ids" in atlas

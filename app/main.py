@@ -193,7 +193,7 @@ async def lifespan(_: FastAPI):
         job_manager = None
 
 
-app = FastAPI(title="小说证据图谱", version="2.9.1-rc.2", lifespan=lifespan)
+app = FastAPI(title="小说证据图谱", version="2.9.2-rc.1", lifespan=lifespan)
 
 
 def rows(items: list[sqlite3.Row]) -> list[dict[str, Any]]:
@@ -476,7 +476,10 @@ def list_books() -> list[dict[str, Any]]:
             SELECT b.*,
                 f.name AS folder_name,
                 (SELECT COUNT(*) FROM entities e WHERE e.book_id = b.id) AS entity_count,
-                (SELECT COUNT(*) FROM events v WHERE v.book_id = b.id) AS event_count
+                (SELECT COUNT(*) FROM events v WHERE v.book_id = b.id) AS event_count,
+                (SELECT COUNT(DISTINCT js.ordinal) FROM analysis_job_segments js
+                 JOIN analysis_jobs j ON j.id = js.job_id
+                 WHERE j.book_id = b.id AND js.status IN ('completed', 'cached')) AS analyzed_segment_count
             FROM books b LEFT JOIN library_folders f ON f.id = b.folder_id
             ORDER BY COALESCE(f.sort_order, -1), COALESCE(f.name, ''), b.updated_at DESC, b.id DESC
             """
@@ -598,6 +601,11 @@ def patch_book(book_id: int, request: BookPatch) -> dict[str, Any]:
         if request.folder_id is not None or request.move_to_root:
             updates.append("folder_id = ?")
             values.append(None if request.move_to_root else request.folder_id)
+        for field_name in ("language", "corpus_kind", "license_name", "source_url", "rights_status", "source_sha256"):
+            field_value = getattr(request, field_name)
+            if field_value is not None:
+                updates.append(f"{field_name} = ?")
+                values.append(field_value.strip())
         if updates:
             updates.append("updated_at = CURRENT_TIMESTAMP")
             values.append(book_id)
@@ -4681,7 +4689,7 @@ def patch_ui_issue(issue_id: int, request: UiIssuePatch) -> dict[str, Any]:
 def health() -> dict[str, str]:
     """供本机容器与反向代理检查进程状态，不返回书库或模型信息。"""
 
-    return {"status": "ok", "version": "2.9.1-rc.2"}
+    return {"status": "ok", "version": "2.9.2-rc.1"}
 
 
 @app.get("/readyz", include_in_schema=False)
@@ -4690,7 +4698,7 @@ def ready() -> dict[str, str]:
 
     with connect(settings.database_path) as connection:
         connection.execute("SELECT 1").fetchone()
-    return {"status": "ready", "version": "2.9.1-rc.2"}
+    return {"status": "ready", "version": "2.9.2-rc.1"}
 
 
 @app.get("/")

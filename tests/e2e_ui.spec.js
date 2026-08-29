@@ -11,7 +11,7 @@ test("2D 与 3D 地图共享编年状态并支持快速连续切换", async ({ p
 
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await expect(page.locator(".brand span")).toContainText("2.9.1");
+  await expect(page.locator(".brand span")).toContainText("2.9.2");
   await page.locator('.nav-item[data-view="map"]').click();
   const totalSteps = Number(await page.locator("#map-step-slider").getAttribute("max")) + 1;
   const totalPlaces = await page.locator(".map-node").count();
@@ -175,8 +175,8 @@ test("真实长篇世界图保留全部节点并分级显示标签", async ({ pa
   expect(errors).toEqual([]);
 });
 
-test("五部真实公版全文可以在三栏书库中检索、切换和打开", async ({ page }) => {
-  test.skip(!process.env.NOVEL_ATLAS_REAL_CORPUS, "需要五部本机公版全文验收副本");
+test("十二部真实开放全文可以在三栏书库中检索、切换和打开", async ({ page }) => {
+  test.skip(!process.env.NOVEL_ATLAS_REAL_CORPUS, "需要十二部本机开放全文验收副本");
   const errors = [];
   page.on("console", (message) => {
     if (message.type() === "error") errors.push(message.text());
@@ -192,7 +192,7 @@ test("五部真实公版全文可以在三栏书库中检索、切换和打开",
   await expect(page.locator(".library-detail-pane")).toBeVisible();
   await expect(page.locator(".library-folder-pane")).not.toContainText("children.get");
   await expect(page.locator(".library-folder-node")).not.toHaveCount(0);
-  for (const title of ["西游记", "红楼梦", "水浒传", "三国演义", "聊斋志异"]) {
+  for (const title of ["西游记", "红楼梦", "水浒传", "三国演义", "聊斋志异", "镜花缘", "海上花列传", "Pride and Prejudice", "The Adventures of Sherlock Holmes", "A Princess of Mars", "銀河鉄道の夜", "The Spiraling Web"]) {
     await page.locator("#library-search").fill(title);
     await expect(page.locator(".library-book-card")).toHaveCount(1);
     await expect(page.locator(".library-book-card strong")).toHaveText(title);
@@ -200,6 +200,9 @@ test("五部真实公版全文可以在三栏书库中检索、切换和打开",
     await page.locator(".library-book-card").click();
     await expect(page.locator(".library-book-detail h3")).toHaveText(title);
     await expect(page.locator(".library-book-detail")).toContainText("原文片段");
+    await expect(page.locator(".library-book-detail")).toContainText("真实开放作品");
+    await expect(page.locator(".library-book-detail")).toContainText("分析范围");
+    await expect(page.locator(".library-book-detail")).toContainText("查看作品来源");
   }
   await page.locator("#library-search").fill("红楼梦");
   await page.locator(".library-book-card").click();
@@ -288,7 +291,8 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
   await expect(page.locator(".select-popover")).toBeVisible();
   await page.keyboard.press("Escape");
 
-  await page.locator("#progress-edit").click();
+  await page.locator("#progress-count").focus();
+  await page.keyboard.press("Enter");
   await expect(page.locator(".progress-inline-input")).toBeVisible();
   await page.locator(".progress-inline-input").fill("3");
   await page.keyboard.press("Enter");
@@ -301,7 +305,7 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
   expect(errors).toEqual([]);
 });
 
-test("2.9.1 地图控制栏不重叠且全世界显示全部故事区域", async ({ page }) => {
+test("2.9.2 地图控制栏、区域联动和播放速度保持一致", async ({ page }) => {
   const errors = [];
   page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
   page.on("pageerror", (error) => errors.push(error.message));
@@ -316,6 +320,31 @@ test("2.9.1 地图控制栏不重叠且全世界显示全部故事区域", async
   expect(layout.region_coverage.generated_region_count).toBe(4);
   expect(layout.region_coverage.visible_region_count).toBe(4);
   await expect(page.locator(".semantic-region")).toHaveCount(4);
+  expect((await page.locator(".semantic-region-label").allTextContents()).join(" ")).not.toContain("故事拓扑片区");
+
+  const overviewResponse = await page.request.get(`${baseURL}/api/books/${await page.locator("#book-select").inputValue()}/overview?through_segment=119`);
+  const overview = await overviewResponse.json();
+  const regionByLocation = new Map();
+  for (const region of layout.regions) for (const id of region.node_ids) if (!regionByLocation.has(Number(id))) regionByLocation.set(Number(id), String(region.id));
+  const regionSteps = [];
+  for (let index = 0; index < overview.events.length; index += 1) {
+    const locationId = overview.events[index].location_entity_id;
+    const regionId = regionByLocation.get(Number(locationId));
+    if (regionId && !regionSteps.some((entry) => entry.regionId === regionId)) regionSteps.push({ index, regionId });
+  }
+  expect(regionSteps.length).toBeGreaterThan(1);
+  for (const entry of regionSteps.slice(0, 2)) {
+    await page.locator("#map-step-slider").evaluate((slider, value) => {
+      slider.value = String(value);
+      slider.dispatchEvent(new Event("input", { bubbles: true }));
+    }, entry.index);
+    await expect(page.locator(`.semantic-region[data-region="${entry.regionId}"]`)).toHaveAttribute("data-emphasis", "current");
+    await expect(page.locator("#map-event-card")).toContainText("当前区域");
+  }
+
+  await page.locator("#map-playback-speed").selectOption("2");
+  await expect(page.locator("#map-playback-speed")).toHaveValue("2");
+  expect(await page.evaluate(() => window.localStorage.getItem("novel-atlas-playback-speed"))).toBe("2");
 
   const sizes = [
     { width: 1366, height: 768 },

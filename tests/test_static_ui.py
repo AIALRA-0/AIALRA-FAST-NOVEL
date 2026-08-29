@@ -135,8 +135,11 @@ def test_v29_shared_select_progress_and_quality_workbench_contract() -> None:
     assert "function enhanceSelect(select)" in script
     assert "class=\"select-popover\"" not in page
     assert ".select-popover" in styles
-    assert 'id="progress-edit"' in page
+    assert 'id="progress-edit"' not in page
+    assert 'id="progress-count" class="progress-count" tabindex="0" role="button"' in page
     assert "function beginProgressEdit()" in script
+    assert 'id="map-playback-speed"' in script
+    assert "1550 / state.mapPlaybackSpeed" in script
     assert "Math.exp(" in script
     assert 'data-tab="pending"' in script
     assert 'data-tab="gold"' in script
@@ -154,6 +157,8 @@ def test_v291_map_controls_flow_without_absolute_overlap_and_regions_stay_visibl
     assert ".map-stage .map-viewport-controls { position: static" in styles
     assert ".semantic-region.is-topology path" in styles
     assert ".semantic-region.is-evidence path" in styles
+    assert "syncMap2DRegions(event.location_entity_id)" in script
+    assert "region.display_name || region.label" in script
 
 
 def test_v29_systems_and_story_context_are_reader_visible_without_a_second_map_sequence() -> None:

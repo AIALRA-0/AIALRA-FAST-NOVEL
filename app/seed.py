@@ -67,8 +67,9 @@ def seed_demo(database_path: Path) -> None:
     with transaction(database_path) as connection:
         cursor = connection.execute(
             """
-            INSERT INTO books(title, author, source_type, source_hash, original_filename, segment_count, character_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO books(title, author, source_type, source_hash, original_filename, segment_count, character_count,
+                language, corpus_kind, license_name, rights_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'zh-CN', 'synthetic', '系统虚构，不对应真实作品', 'synthetic')
             """,
             (
                 "雾川行记 · 演示",
@@ -306,8 +307,9 @@ def _insert_generated_demo(connection: object, spec: GeneratedDemoSpec) -> None:
     character_count = sum(len(title) + len(text) for title, text in chapter_rows)
     cursor = connection.execute(
         """
-        INSERT INTO books(title, author, source_type, source_hash, original_filename, segment_count, character_count)
-        VALUES (?, '系统大型联动样例', 'txt', ?, ?, ?, ?)
+        INSERT INTO books(title, author, source_type, source_hash, original_filename, segment_count, character_count,
+            language, corpus_kind, license_name, rights_status)
+        VALUES (?, '系统大型联动样例', 'txt', ?, ?, ?, ?, 'zh-CN', 'synthetic', '系统虚构，不对应真实作品', 'synthetic')
         """,
         (spec.title, source_hash, f"{spec.title}.txt", spec.chapter_count, character_count),
     )

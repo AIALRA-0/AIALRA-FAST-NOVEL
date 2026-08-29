@@ -186,8 +186,8 @@ def test_program_seeded_cases_remain_candidates_until_a_human_reviews_them(tmp_p
         assert progress["candidate_cases"] == 28
 
 
-def test_formal_corpus_declares_three_classics_and_two_authorized_modern_slots(tmp_path: Path) -> None:
-    """质量范围必须公开区分古典作品和等待授权的现代作品。"""
+def test_formal_corpus_declares_twelve_cross_genre_open_works(tmp_path: Path) -> None:
+    """质量范围公开区分直接覆盖和开放作品代理，不冒充商业文体验证。"""
 
     with client_for(tmp_path) as client:
         response = client.get("/api/eval-suites/corpus")
@@ -195,9 +195,10 @@ def test_formal_corpus_declares_three_classics_and_two_authorized_modern_slots(t
         body = response.json()
         assert body["case_policy"]["total_cases"] == 300
         assert body["case_policy"]["total_sealed_holdout_cases"] == 60
-        assert len(body["works"]) == 5
-        assert sum(item["authorization_state"] == "available" for item in body["works"]) == 3
-        assert sum(item["authorization_state"] == "waiting_for_authorized_work" for item in body["works"]) == 2
+        assert len(body["works"]) == 12
+        assert sum(item["coverage_role"] == "direct" for item in body["works"]) == 5
+        assert sum(item["coverage_role"] == "proxy" for item in body["works"]) == 7
+        assert {item["language"] for item in body["works"]} == {"zh-CN", "en", "ja"}
 
 
 def test_holdout_answer_is_hidden_from_normal_benchmark_listing(tmp_path: Path) -> None:

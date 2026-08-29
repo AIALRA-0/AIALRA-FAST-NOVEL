@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: aialra/novel-atlas:2.9.1-rc.2
+    image: aialra/novel-atlas:2.9.2-rc.1
     restart: unless-stopped
     ports:
       - "127.0.0.1:${NOVEL_ATLAS_PORT:-18765}:8080"

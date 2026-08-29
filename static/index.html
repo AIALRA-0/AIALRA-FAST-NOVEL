@@ -6,7 +6,7 @@
   <meta name="description" content="带原文证据的小说人物、时间、地点与世界知识系统">
   <title>小说证据图谱</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111111'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' fill='white'%3E%E5%8F%99%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/static/styles.css?v=2.9.1-rc.2">
+  <link rel="stylesheet" href="/static/styles.css?v=2.9.2-rc.1">
 </head>
 <body>
   <!-- 跳转链接帮助键盘用户直接进入主要内容。 -->
@@ -18,7 +18,7 @@
         <div class="brand-mark" aria-hidden="true">叙</div>
         <div>
           <strong>小说证据图谱</strong>
-          <span>Novel Atlas · 2.9.1-rc.2 候选版</span>
+          <span>Novel Atlas · 2.9.2-rc.1 候选版</span>
         </div>
       </div>
 
@@ -49,7 +49,7 @@
 
       <section class="progress-control" aria-labelledby="progress-title">
         <div class="section-label" id="progress-title">防剧透进度</div>
-        <div class="progress-copy"><strong id="progress-chapter">—</strong><span id="progress-count" title="双击输入进度">—</span><button id="progress-edit" class="progress-edit" type="button">编辑进度</button></div>
+        <div class="progress-copy"><strong id="progress-chapter">—</strong><span id="progress-count" class="progress-count" tabindex="0" role="button" title="双击或按 Enter 输入进度" aria-label="编辑防剧透进度">—</span></div>
         <input id="progress-slider" type="range" min="0" max="0" value="0" aria-label="只显示读到当前章节之前的信息">
         <p>人物、关系、地点和条目会使用同一个阅读边界。</p>
       </section>
@@ -179,6 +179,6 @@
   <script src="/static/vendor/layout-base-2.0.1.js" defer></script>
   <script src="/static/vendor/cose-base-2.2.0.js" defer></script>
   <script src="/static/vendor/cytoscape-fcose-2.2.0.js" defer></script>
-  <script src="/static/app.js?v=2.9.1-rc.2" defer></script>
+  <script src="/static/app.js?v=2.9.2-rc.1" defer></script>
 </body>
 </html>

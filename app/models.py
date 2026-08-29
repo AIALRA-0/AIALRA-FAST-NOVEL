@@ -228,6 +228,12 @@ class BookPatch(BaseModel):
     author: str | None = Field(default=None, max_length=240)
     folder_id: int | None = Field(default=None, gt=0)
     move_to_root: bool = False
+    language: str | None = Field(default=None, max_length=80)
+    corpus_kind: Literal["user_upload", "open_real", "synthetic"] | None = None
+    license_name: str | None = Field(default=None, max_length=240)
+    source_url: str | None = Field(default=None, max_length=1_000)
+    rights_status: Literal["user_supplied", "public_domain_us", "open_license", "synthetic"] | None = None
+    source_sha256: str | None = Field(default=None, min_length=64, max_length=64)
 
 
 class BookUpdateResolution(BaseModel):

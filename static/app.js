@@ -29,6 +29,9 @@ const state = {
   mapTimer: null,
   mapPlaybackState: "idle",
   mapPlaybackRunId: 0,
+  mapPlaybackSpeed: [0.5, 1, 1.5, 2].includes(Number(window.localStorage.getItem("novel-atlas-playback-speed")))
+    ? Number(window.localStorage.getItem("novel-atlas-playback-speed")) : 1,
+  mapLastConfirmedRegionId: null,
   mapAnimationFrame: null,
   mapMarkerPoint: null,
   mapMarkerPoint3D: null,
@@ -422,6 +425,7 @@ function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
   group.name = "novel-atlas-semantic-regions";
   const palette = [0x7cb5df, 0xb693d0, 0xe2b975, 0x7fc7b7, 0xdc94aa, 0x9ca5dc];
   const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
+  const emphasis = mapRegionEmphasis(currentLocationId || null, currentLocationId > 0);
   let created = 0;
   regions.forEach((region, regionIndex) => {
     const hull = (region.hull || []).filter((point) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)));
@@ -443,18 +447,22 @@ function installMap3DRegionMeshes(graph, centerX, centerY, attempt = 0) {
     geometry.setAttribute("position", new PositionAttributeConstructor(new Float32Array(vertices), 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals?.();
-    const active = currentLocationId > 0 && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId);
+    const status = emphasis.status(region.id);
+    const active = status === "current";
     const material = new MaterialConstructor({
       color: palette[Number(region.palette_index ?? regionIndex) % palette.length],
       transparent: true,
-      opacity: active ? (region.kind === "evidence_containment" ? 0.24 : 0.16) : (region.kind === "evidence_containment" ? 0.11 : 0.045),
+      opacity: active ? (region.kind === "evidence_containment" ? 0.48 : 0.38)
+        : status === "ancestor" ? 0.22
+          : status === "last" ? 0.13
+            : (region.kind === "evidence_containment" ? 0.08 : 0.04),
       depthWrite: false,
     });
     const mesh = new MeshConstructor(geometry, material);
     mesh.name = `semantic-region:${region.id}`;
     mesh.position.z = Number(region.containment_depth || 0) * 86 - 24;
     mesh.renderOrder = -2;
-    mesh.userData = { ...(mesh.userData || {}), regionId: region.id, boundaryKind: "semantic", active };
+    mesh.userData = { ...(mesh.userData || {}), regionId: region.id, boundaryKind: "semantic", active, emphasis: status };
     group.add(mesh);
     created += 1;
   });
@@ -471,6 +479,50 @@ function map3DVisibleRegions() {
   return regions.filter((region) => (region.node_ids || []).length && (region.hull || []).length >= 3);
 }
 
+function mapRegionEmphasis(locationId, remember = false) {
+  const regions = state.mapLayout?.regions || [];
+  const numericLocationId = locationId === null || locationId === undefined ? null : Number(locationId);
+  const containing = numericLocationId === null ? [] : regions.filter(
+    (region) => (region.node_ids || []).some((nodeId) => Number(nodeId) === numericLocationId),
+  );
+  containing.sort((left, right) => {
+    const leftEvidence = left.kind === "evidence_containment" ? 1 : 0;
+    const rightEvidence = right.kind === "evidence_containment" ? 1 : 0;
+    return rightEvidence - leftEvidence
+      || Number(right.containment_depth || 0) - Number(left.containment_depth || 0)
+      || Number(left.member_count || left.node_ids?.length || 0) - Number(right.member_count || right.node_ids?.length || 0)
+      || String(left.id).localeCompare(String(right.id));
+  });
+  const primary = containing[0] || null;
+  if (remember && primary) state.mapLastConfirmedRegionId = String(primary.id);
+  const containingIds = new Set(containing.map((region) => String(region.id)));
+  return {
+    primaryId: primary ? String(primary.id) : null,
+    containingIds,
+    lastId: primary ? null : state.mapLastConfirmedRegionId,
+    status(regionId) {
+      const id = String(regionId);
+      if (id === this.primaryId) return "current";
+      if (this.containingIds.has(id)) return "ancestor";
+      if (id === this.lastId) return "last";
+      return "secondary";
+    },
+  };
+}
+
+function syncMap2DRegions(locationId) {
+  const emphasis = mapRegionEmphasis(locationId, locationId !== null && locationId !== undefined);
+  $$(".semantic-region").forEach((element) => {
+    const status = emphasis.status(element.dataset.region);
+    element.classList.toggle("is-active", status === "current");
+    element.classList.toggle("is-ancestor", status === "ancestor");
+    element.classList.toggle("is-last-known", status === "last");
+    element.classList.toggle("is-secondary", status === "secondary");
+    element.dataset.emphasis = status;
+  });
+  return emphasis;
+}
+
 function resetMapStateForBook() {
   stopMapPlayback();
   disposeMapGraph();
@@ -481,6 +533,7 @@ function resetMapStateForBook() {
   state.mapMarkerPoint3D = null;
   state.activeLocation = null;
   state.mapPlaybackState = "idle";
+  state.mapLastConfirmedRegionId = null;
 }
 
 async function api(path, options = {}) {
@@ -597,7 +650,7 @@ function configureProgress() {
   const segment = overview.segments[overview.through_segment];
   $("#progress-chapter").textContent = segment?.chapter_title || "无章节";
   $("#progress-count").textContent = `${overview.through_segment + 1}/${overview.segments.length}`;
-  $("#progress-edit")?.setAttribute("aria-label", `编辑防剧透进度，当前第 ${overview.through_segment + 1} 部分`);
+  $("#progress-count").setAttribute("aria-label", `编辑防剧透进度，当前第 ${overview.through_segment + 1} 部分`);
 }
 
 function beginProgressEdit() {
@@ -1868,17 +1921,22 @@ function renderMap() {
   state.mapStep = Math.max(0, Math.min(state.mapStep, Math.max(0, journey.length - 1)));
   const paper = `<rect class="map-paper-plane" x="${state.mapBounds.minX}" y="${state.mapBounds.minY}" width="${state.mapBounds.maxX - state.mapBounds.minX}" height="${state.mapBounds.maxY - state.mapBounds.minY}"></rect>`;
   const visibleLocationIds = new Set(locations.map((location) => Number(location.id)));
+  const initialRegionEmphasis = mapRegionEmphasis(currentLocationId, currentLocationId !== null && currentLocationId !== undefined);
   const semanticRegions = state.mapPresentation === "atlas" ? (state.mapLayout?.regions || []).map((region, index) => {
     const regionNodes = (region.node_ids || []).filter((nodeId) => visibleLocationIds.has(Number(nodeId)));
     if (!regionNodes.length || (region.hull || []).length < 3) return "";
-    const activeRegion = currentLocationId !== null && currentLocationId !== undefined && regionNodes.some((nodeId) => Number(nodeId) === Number(currentLocationId));
+    const emphasisStatus = initialRegionEmphasis.status(region.id);
     const path = region.hull.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${Number(point.x)} ${Number(point.y)}`).join(" ");
-    const centroid = region.centroid || {};
+    const labelAnchor = region.label_anchor || region.centroid || {};
+    const connector = region.label_connector || {};
     const regionClass = region.kind === "evidence_containment" ? "is-evidence" : "is-topology";
-    const label = Number.isFinite(Number(centroid.x)) && Number.isFinite(Number(centroid.y))
-      ? `<text class="semantic-region-label" x="${Number(centroid.x)}" y="${Number(centroid.y)}">${escapeHtml(region.label)}</text>`
+    const regionName = region.display_name || region.label;
+    const labelWidth = Math.max(72, [...String(regionName || "")].length * 13 + 22);
+    const label = Number.isFinite(Number(labelAnchor.x)) && Number.isFinite(Number(labelAnchor.y))
+      ? `<g class="semantic-region-label-wrap"><line class="semantic-region-label-connector" x1="${Number(connector.x1 ?? labelAnchor.x)}" y1="${Number(connector.y1 ?? labelAnchor.y)}" x2="${Number(connector.x2 ?? labelAnchor.x)}" y2="${Number(connector.y2 ?? labelAnchor.y)}"></line><rect class="semantic-region-label-bg" x="${Number(labelAnchor.x) - labelWidth / 2}" y="${Number(labelAnchor.y) - 16}" width="${labelWidth}" height="25" rx="8"></rect><text class="semantic-region-label" x="${Number(labelAnchor.x)}" y="${Number(labelAnchor.y) + 1}">${escapeHtml(regionName)}</text></g>`
       : "";
-    return `<g class="semantic-region ${regionClass}${activeRegion ? " is-active" : " is-secondary"} region-${Number(region.palette_index ?? index) % 6}" data-region="${escapeHtml(region.id)}" tabindex="0" role="button"><path d="${path} Z"></path>${label}<title>${escapeHtml(region.label)}；${region.kind === "evidence_containment" ? "原文包含区域" : "故事组织区域"}；轮廓不代表真实地理边界</title></g>`;
+    const emphasisClass = emphasisStatus === "current" ? " is-active" : emphasisStatus === "ancestor" ? " is-ancestor" : emphasisStatus === "last" ? " is-last-known" : " is-secondary";
+    return `<g class="semantic-region ${regionClass}${emphasisClass} region-${Number(region.palette_index ?? index) % 6}" data-region="${escapeHtml(region.id)}" data-emphasis="${emphasisStatus}" tabindex="0" role="button"><path d="${path} Z"></path>${label}<title>${escapeHtml(regionName)}；${region.kind === "evidence_containment" ? "原文包含区域" : "故事组织区域"}；轮廓不代表真实地理边界</title></g>`;
   }).join("") : "";
   const geography = geographyRelations.slice(0, 36).map((relation) => {
     const start = points.get(relation.source_entity_id);
@@ -1927,7 +1985,7 @@ function renderMap() {
   const firstPoint = firstEvent?.location_entity_id !== null ? points.get(firstEvent.location_entity_id) : null;
   const initialMarker = firstPoint ? `transform="translate(${firstPoint.x} ${firstPoint.y})"` : "hidden";
   const initials = [...(state.overview.protagonist?.name || "主")].slice(-1).join("");
-  const controls = journey.length ? `<div class="journey-controls"><button id="map-prev" class="button button-quiet" type="button">上一步</button><button id="map-play" class="button button-primary" type="button">播放编年</button><button id="map-next" class="button button-quiet" type="button">下一步</button><input id="map-step-slider" type="range" min="0" max="${journey.length - 1}" value="${state.mapStep}" aria-label="选择故事编年步骤"><strong id="map-step-count">${state.mapStep + 1}/${journey.length}</strong><button id="map-route-scope" class="button button-quiet route-scope" type="button">${state.mapShowFullRoute ? "只看当前附近" : "显示完整路线"}</button></div>` : "";
+  const controls = journey.length ? `<div class="journey-controls"><button id="map-prev" class="button button-quiet" type="button">上一步</button><button id="map-play" class="button button-primary" type="button">播放编年</button><button id="map-next" class="button button-quiet" type="button">下一步</button><input id="map-step-slider" type="range" min="0" max="${journey.length - 1}" value="${state.mapStep}" aria-label="选择故事编年步骤"><strong id="map-step-count">${state.mapStep + 1}/${journey.length}</strong><label class="playback-speed-label" for="map-playback-speed">速度</label><select id="map-playback-speed" aria-label="播放速度"><option value="0.5" ${state.mapPlaybackSpeed === 0.5 ? "selected" : ""}>0.5×</option><option value="1" ${state.mapPlaybackSpeed === 1 ? "selected" : ""}>1×</option><option value="1.5" ${state.mapPlaybackSpeed === 1.5 ? "selected" : ""}>1.5×</option><option value="2" ${state.mapPlaybackSpeed === 2 ? "selected" : ""}>2×</option></select><button id="map-route-scope" class="button button-quiet route-scope" type="button">${state.mapShowFullRoute ? "只看当前附近" : "显示完整路线"}</button></div>` : "";
   const directionalKinds = new Set(["north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest", "upstream", "downstream"]);
   const directionalCount = geographyRelations.filter((relation) => directionalKinds.has(relation.relative_position)).length;
   const containmentCount = geographyRelations.filter((relation) => ["inside", "contains"].includes(relation.relative_position)).length;
@@ -2013,6 +2071,13 @@ function renderMap() {
   $("#map-next").addEventListener("click", () => setMapStep(state.mapStep + 1));
   $("#map-step-slider").addEventListener("input", (event) => setMapStep(Number(event.target.value)));
   $("#map-play").addEventListener("click", toggleMapPlayback);
+  $("#map-playback-speed")?.addEventListener("change", (event) => {
+    const speed = Number(event.target.value);
+    if (![0.5, 1, 1.5, 2].includes(speed)) return;
+    state.mapPlaybackSpeed = speed;
+    window.localStorage.setItem("novel-atlas-playback-speed", String(speed));
+    if (state.mapPlaybackState === "playing") startMapPlaybackSchedule();
+  });
   $("#map-route-scope").addEventListener("click", () => {
     state.mapShowFullRoute = !state.mapShowFullRoute;
     $("#map-route-scope").textContent = state.mapShowFullRoute ? "只看当前附近" : "显示完整行程";
@@ -2084,13 +2149,13 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
   });
   const nodeByLocation = new Map(nodes.map((node) => [node.locationId, node]));
   map3DVisibleRegions().forEach((region, index) => {
-    const centroid = region.centroid || region.hull?.[0];
-    if (!centroid) return;
-    const x = (Number(centroid.x) - centerX) * 0.72;
-    const y = -(Number(centroid.y) - centerY) * 0.72;
+    const labelAnchor = region.label_anchor || region.centroid || region.hull?.[0];
+    if (!labelAnchor) return;
+    const x = (Number(labelAnchor.x) - centerX) * 0.72;
+    const y = -(Number(labelAnchor.y) - centerY) * 0.72;
     const z = Number(region.containment_depth || 0) * 86 + 12;
     nodes.push({
-      id: `region:${region.id}`, name: region.label, kind: "region", regionId: String(region.id),
+      id: `region:${region.id}`, name: region.display_name || region.label, kind: "region", regionId: String(region.id),
       memberIds: (region.node_ids || []).map(Number), x, y, z, fx: x, fy: y, fz: z,
       importance: 0.25, active: false, focused: true, visible: true,
     });
@@ -2563,10 +2628,13 @@ function syncMap3DStep(event, visibleLocationIds, step, animate) {
   const actor = state.map3DActor;
   if (state.mapMode !== "3d" || !graph || !nodes || !links || !actor) return;
   const currentLocationId = event.location_entity_id === null ? null : Number(event.location_entity_id);
+  const emphasis = mapRegionEmphasis(currentLocationId, currentLocationId !== null);
   nodes.forEach((node) => {
     if (node.kind === "actor") return;
     if (node.kind === "region") {
-      node.active = currentLocationId !== null && node.memberIds.includes(currentLocationId);
+      const status = emphasis.status(node.regionId);
+      node.active = status === "current";
+      node.regionEmphasis = status;
       node.focused = true;
       node.visible = state.mapPresentation === "atlas";
       return;
@@ -2578,11 +2646,13 @@ function syncMap3DStep(event, visibleLocationIds, step, animate) {
   state.map3DRegionGroup?.children?.forEach((mesh) => {
     const region = (state.mapLayout?.regions || []).find((item) => String(item.id) === String(mesh.userData?.regionId));
     if (!region || !mesh.material) return;
-    const active = currentLocationId !== null && (region.node_ids || []).some((nodeId) => Number(nodeId) === currentLocationId);
-    mesh.userData.active = active;
-    mesh.material.opacity = active
-      ? (region.kind === "evidence_containment" ? 0.24 : 0.16)
-      : (region.kind === "evidence_containment" ? 0.11 : 0.045);
+    const status = emphasis.status(region.id);
+    mesh.userData.active = status === "current";
+    mesh.userData.emphasis = status;
+    mesh.material.opacity = status === "current" ? (region.kind === "evidence_containment" ? 0.48 : 0.38)
+      : status === "ancestor" ? 0.22
+        : status === "last" ? 0.13
+          : (region.kind === "evidence_containment" ? 0.08 : 0.04);
     mesh.material.needsUpdate = true;
   });
   links.forEach((link) => {
@@ -2632,7 +2702,7 @@ function animateMapMarker3D(target, animate) {
     return;
   }
   const started = performance.now();
-  const duration = 720;
+  const duration = 720 / state.mapPlaybackSpeed;
   const frame = (now) => {
     if (state.mapGraph !== graph || state.map3DActor !== actor) return;
     const progress = Math.min(1, (now - started) / duration);
@@ -2702,6 +2772,7 @@ function setMapStep(nextStep, animate = true) {
     const endpointsVisible = visibleLocationIds.has(Number(route.dataset.source)) && visibleLocationIds.has(Number(route.dataset.target));
     route.classList.toggle("far", !state.mapShowFullRoute || !endpointsVisible);
   });
+  const regionEmphasis = syncMap2DRegions(event.location_entity_id);
   syncMap3DStep(event, visibleLocationIds, step, animate);
   if (target) {
     const focusPoints = [...visibleLocationIds].map((locationId) => state.mapPoints?.get(locationId)).filter(Boolean);
@@ -2733,10 +2804,12 @@ function setMapStep(nextStep, animate = true) {
     : journey.filter((item) => Number(item.location_entity_id) === Number(event.location_entity_id));
   const leg = (state.overview.routes || []).find((route) => Number(route.event_id) === Number(event.id));
   const displayedLocation = event.location_name || "地点待确认";
+  const currentRegion = (state.mapLayout?.regions || []).find((region) => String(region.id) === String(regionEmphasis.primaryId));
+  const displayedRegion = currentRegion?.display_name || currentRegion?.label || (event.location_entity_id === null && regionEmphasis.lastId ? "地点未知，上次确认区域" : "区域待确认");
   const pathStatus = event.location_entity_id === null
     ? "原文没有确认当前地点，人物标记暂时隐藏"
     : leg?.gap_status === "unknown_path" ? "原文路径有缺口，节点仍完整保留" : "路线连续";
-  $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
+  $("#map-event-card").innerHTML = `<span class="eyebrow">编年第 ${step + 1} 步 · ${escapeHtml(chapterForSegment(event.first_segment))}</span><h3>${escapeHtml(event.title)}</h3><p>${escapeHtml(eventNarrativeText(event))}</p><div class="map-event-facts"><span><b>故事时间</b>${escapeHtml(event.temporal_value || "时间未知")}</span><span><b>当前地点</b>${escapeHtml(displayedLocation)}</span><span><b>当前区域</b>${escapeHtml(displayedRegion)}</span><span><b>交通方式</b>${escapeHtml(transportLabels[leg?.transport || event.transport] || leg?.transport || event.transport || "未说明")}</span><span><b>路径状态</b>${escapeHtml(pathStatus)}</span><span><b>在场人物</b>${escapeHtml(participants)}</span></div><button id="map-evidence" class="button button-quiet full" type="button">打开这一步的原文</button><div class="location-history"><strong>${event.location_entity_id === null ? "当前故事步骤" : `此地共发生 ${history.length} 个编年事件`}</strong>${history.map((item) => `<button class="map-history-step" data-event="${item.id}" type="button">${escapeHtml(item.temporal_value || "时间未知")} · ${escapeHtml(item.title)}</button>`).join("")}</div>`;
   loadStoryContext(event, Number(state.overview?.book?.id || state.bookId));
   $("#map-evidence")?.addEventListener("click", () => openEventSource(event));
   $$(".map-history-step").forEach((button) => button.addEventListener("click", () => {
@@ -2804,7 +2877,7 @@ function animateMapMarker(target, animate) {
     return;
   }
   const started = performance.now();
-  const duration = 720;
+  const duration = 720 / state.mapPlaybackSpeed;
   const frame = (now) => {
     const progress = Math.min(1, (now - started) / duration);
     const eased = 1 - Math.pow(1 - progress, 3);
@@ -2819,6 +2892,18 @@ function animateMapMarker(target, animate) {
   state.mapAnimationFrame = requestAnimationFrame(frame);
 }
 
+function startMapPlaybackSchedule() {
+  const journey = storyMapSteps();
+  if (!journey.length || state.mapPlaybackState !== "playing") return;
+  const runId = ++state.mapPlaybackRunId;
+  clearTimeout(state.mapTimer);
+  state.mapTimer = setTimeout(() => {
+    if (state.mapPlaybackState !== "playing" || state.mapPlaybackRunId !== runId || state.view !== "map") return;
+    setMapStep(state.mapStep + 1);
+    if (state.mapStep < journey.length - 1 && state.mapPlaybackState === "playing") startMapPlaybackSchedule();
+  }, 1550 / state.mapPlaybackSpeed);
+}
+
 function toggleMapPlayback() {
   const journey = storyMapSteps();
   if (!journey.length) return;
@@ -2831,16 +2916,7 @@ function toggleMapPlayback() {
   if (state.mapStep >= journey.length - 1) setMapStep(0, false);
   state.mapPlaybackState = "playing";
   $("#map-play").textContent = "暂停播放";
-  const runId = ++state.mapPlaybackRunId;
-  const scheduleNext = () => {
-    clearTimeout(state.mapTimer);
-    state.mapTimer = setTimeout(() => {
-      if (state.mapPlaybackState !== "playing" || state.mapPlaybackRunId !== runId || state.view !== "map") return;
-      setMapStep(state.mapStep + 1);
-      if (state.mapStep < journey.length - 1 && state.mapPlaybackState === "playing") scheduleNext();
-    }, 1550);
-  };
-  scheduleNext();
+  startMapPlaybackSchedule();
 }
 
 function bindProtagonistPicker() {
@@ -4226,11 +4302,11 @@ function renderLibraryManager() {
   if (!filteredBooks.some((book) => Number(book.id) === Number(state.libraryBookId))) {
     state.libraryBookId = filteredBooks[0]?.id || null;
   }
-  const bookCards = filteredBooks.map((book) => `<button class="library-book-card${Number(book.id) === Number(state.libraryBookId) ? " active" : ""}" data-book="${book.id}" type="button"><span class="library-book-mark" aria-hidden="true">书</span><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author || "作者未填写")} · ${Number(book.segment_count || 0)} 个原文片段 · ${Number(book.character_count || 0).toLocaleString()} 字</small></span></button>`).join("");
+  const bookCards = filteredBooks.map((book) => `<button class="library-book-card${Number(book.id) === Number(state.libraryBookId) ? " active" : ""}" data-book="${book.id}" type="button"><span class="library-book-mark" aria-hidden="true">书</span><span><strong>${escapeHtml(book.title)}</strong><small>${escapeHtml(book.author || "作者未填写")} · ${Number(book.segment_count || 0)} 个原文片段 · ${Number(book.character_count || 0).toLocaleString()} 字</small><small>${book.corpus_kind === "open_real" ? "真实开放作品" : book.corpus_kind === "synthetic" ? "系统虚构" : "用户导入"}${book.language ? ` · ${escapeHtml(book.language)}` : ""} · 已分析 ${Number(book.analyzed_segment_count || 0)}/${Number(book.segment_count || 0)}</small></span></button>`).join("");
   const selectedBook = state.books.find((book) => Number(book.id) === Number(state.libraryBookId));
   const selectedFolder = selectedBook?.folder_id === null ? "根目录" : state.folders.find((folder) => Number(folder.id) === Number(selectedBook?.folder_id))?.name || "待归类";
   const editingBook = selectedBook && Number(state.libraryEditingBookId) === Number(selectedBook.id);
-  const bookDetail = selectedBook ? `<div class="library-book-detail" data-book="${selectedBook.id}"><span class="eyebrow">书籍详情</span><h3>${escapeHtml(selectedBook.title)}</h3>${editingBook ? `<div class="library-book-editor form-stack"><label for="library-book-title">书名</label><input id="library-book-title" class="book-title-edit" value="${escapeHtml(selectedBook.title)}"><label for="library-book-author">作者</label><input id="library-book-author" class="book-author-edit" value="${escapeHtml(selectedBook.author || "")}"><label for="library-book-folder">所在文件夹</label><select id="library-book-folder" class="book-folder-edit">${folderOptions(selectedBook.folder_id)}</select><div class="action-bar"><button class="button button-primary save-book" type="button">保存修改</button><button class="button button-quiet cancel-book-edit" type="button">取消</button></div></div>` : `<dl><div><dt>作者</dt><dd>${escapeHtml(selectedBook.author || "未填写")}</dd></div><div><dt>分类</dt><dd>${escapeHtml(selectedFolder)}</dd></div><div><dt>原文片段</dt><dd>${Number(selectedBook.segment_count || 0)}</dd></div><div><dt>全文字符</dt><dd>${Number(selectedBook.character_count || 0).toLocaleString()}</dd></div><div><dt>更新时间</dt><dd>${escapeHtml(selectedBook.updated_at || "未记录")}</dd></div></dl><div class="library-detail-actions"><button class="button button-primary open-book" type="button">打开这本书</button><button class="button button-quiet edit-book" type="button">编辑资料</button><button class="button button-danger delete-book-row" type="button">删除书籍</button></div>`}</div>` : emptyState("没有符合条件的书籍", "更换文件夹或清除搜索条件后再查看");
+  const bookDetail = selectedBook ? `<div class="library-book-detail" data-book="${selectedBook.id}"><span class="eyebrow">书籍详情</span><h3>${escapeHtml(selectedBook.title)}</h3>${editingBook ? `<div class="library-book-editor form-stack"><label for="library-book-title">书名</label><input id="library-book-title" class="book-title-edit" value="${escapeHtml(selectedBook.title)}"><label for="library-book-author">作者</label><input id="library-book-author" class="book-author-edit" value="${escapeHtml(selectedBook.author || "")}"><label for="library-book-folder">所在文件夹</label><select id="library-book-folder" class="book-folder-edit">${folderOptions(selectedBook.folder_id)}</select><div class="action-bar"><button class="button button-primary save-book" type="button">保存修改</button><button class="button button-quiet cancel-book-edit" type="button">取消</button></div></div>` : `<dl><div><dt>作者</dt><dd>${escapeHtml(selectedBook.author || "未填写")}</dd></div><div><dt>分类</dt><dd>${escapeHtml(selectedFolder)}</dd></div><div><dt>作品类型</dt><dd>${selectedBook.corpus_kind === "open_real" ? "真实开放作品" : selectedBook.corpus_kind === "synthetic" ? "功能演示 · 系统虚构" : "用户导入"}</dd></div><div><dt>语言</dt><dd>${escapeHtml(selectedBook.language || "未记录")}</dd></div><div><dt>许可</dt><dd>${escapeHtml(selectedBook.license_name || "用户自行确认使用权")}</dd></div><div><dt>分析范围</dt><dd>${Number(selectedBook.analyzed_segment_count || 0)}/${Number(selectedBook.segment_count || 0)} 个片段</dd></div><div><dt>原文片段</dt><dd>${Number(selectedBook.segment_count || 0)}</dd></div><div><dt>全文字符</dt><dd>${Number(selectedBook.character_count || 0).toLocaleString()}</dd></div><div><dt>导入时间</dt><dd>${escapeHtml(selectedBook.created_at || "未记录")}</dd></div><div><dt>更新时间</dt><dd>${escapeHtml(selectedBook.updated_at || "未记录")}</dd></div></dl>${selectedBook.source_url ? `<a class="button button-quiet full" href="${escapeHtml(selectedBook.source_url)}" target="_blank" rel="noreferrer">查看作品来源</a>` : ""}<div class="library-detail-actions"><button class="button button-primary open-book" type="button">打开这本书</button><button class="button button-quiet edit-book" type="button">编辑资料</button><button class="button button-danger delete-book-row" type="button">删除书籍</button></div>`}</div>` : emptyState("没有符合条件的书籍", "更换文件夹或清除搜索条件后再查看");
   const folderTreeHtml = folderTree();
   panel.innerHTML = `${panelHead("本机书库", "整理文件夹、书籍资料和分析入口，离开后会恢复原来的阅读视图", `<button id="library-back" class="button button-quiet" type="button">返回阅读</button>`)}<div class="library-workspace"><aside class="library-folder-pane"><div class="library-pane-head"><strong>文件夹</strong><button id="show-folder-create" class="library-inline-action" type="button">新建</button></div><button class="library-folder-select${state.libraryFolderId === "all" ? " active" : ""}" data-folder="all" type="button"><span>◇</span><strong>全部书籍</strong><small>${state.books.length}</small></button><button class="library-folder-select${state.libraryFolderId === "root" ? " active" : ""}" data-folder="root" type="button"><span>⌂</span><strong>根目录</strong><small>${state.books.filter((book) => book.folder_id === null).length}</small></button>${folderTreeHtml || '<p class="library-empty-copy">还没有文件夹</p>'}<div id="library-folder-create" class="library-folder-create form-stack" hidden><label for="new-folder-name">文件夹名称</label><input id="new-folder-name" maxlength="120"><label for="new-folder-parent">上级目录</label><select id="new-folder-parent">${folderOptions()}</select><button id="create-folder-button" class="button button-primary" type="button">创建文件夹</button></div></aside><section class="library-books-pane"><div class="library-searchbar"><input id="library-search" type="search" value="${escapeHtml(state.libraryQuery)}" placeholder="搜索书名或作者"><span>${filteredBooks.length} 本</span></div><div class="library-book-list">${bookCards || emptyState("没有符合条件的书籍", "可以调整文件夹或搜索条件")}</div></section><aside class="library-detail-pane">${bookDetail}</aside></div>`;
   $("#library-back")?.addEventListener("click", () => {
@@ -4712,7 +4788,12 @@ $("#progress-slider").addEventListener("input", (event) => {
 });
 $("#progress-slider").addEventListener("change", (event) => loadOverview(Number(event.target.value)));
 $("#progress-count").addEventListener("dblclick", beginProgressEdit);
-$("#progress-edit").addEventListener("click", beginProgressEdit);
+$("#progress-count").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    beginProgressEdit();
+  }
+});
 $$(".nav-item").forEach((item) => item.addEventListener("click", () => { state.view = item.dataset.view; renderView(); }));
 $("#inspector-close").addEventListener("click", closeInspector);
 $("#scrim").addEventListener("click", closeInspector);

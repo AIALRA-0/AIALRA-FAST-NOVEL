@@ -6,11 +6,11 @@ import hashlib
 import json
 import math
 import sqlite3
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from typing import Any
 
 
-LAYOUT_VERSION = "semantic-atlas-v2.9.1-lod4"
+LAYOUT_VERSION = "semantic-atlas-v2.9.2-lod5"
 _DIRECTION_VECTORS = {
     "north": (0.0, -1.0), "south": (0.0, 1.0),
     "east": (1.0, 0.0), "west": (-1.0, 0.0),
@@ -87,6 +87,88 @@ def _region_boundary(points: list[tuple[float, float]], padding: float = 54.0) -
             {"x": round(min_x, 2), "y": round(max_y, 2)},
         ]
     return _expanded_hull(points, padding)
+
+
+def _label_width(label: str) -> float:
+    """Approximate the SVG label width without depending on browser font metrics."""
+
+    width = sum(12.0 if ord(character) > 127 else 7.2 for character in label)
+    return round(max(68.0, min(190.0, width + 24.0)), 2)
+
+
+def _boxes_intersect(left: dict[str, float], right: dict[str, float], padding: float = 0.0) -> bool:
+    return not (
+        left["max_x"] + padding <= right["min_x"]
+        or right["max_x"] + padding <= left["min_x"]
+        or left["max_y"] + padding <= right["min_y"]
+        or right["max_y"] + padding <= left["min_y"]
+    )
+
+
+def _region_label_geometry(
+    label: str,
+    hull: list[dict[str, float]],
+    member_ids: list[int],
+    positions: dict[int, tuple[float, float]],
+    occupied: list[dict[str, float]],
+) -> tuple[dict[str, Any], dict[str, float]]:
+    """Place a label outside the region while avoiding place and prior region labels."""
+
+    width = _label_width(label)
+    height = 28.0
+    min_x = min(float(point["x"]) for point in hull)
+    max_x = max(float(point["x"]) for point in hull)
+    min_y = min(float(point["y"]) for point in hull)
+    max_y = max(float(point["y"]) for point in hull)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+    candidates = [
+        (min_x + width / 2, min_y - 23.0),
+        (max_x - width / 2, min_y - 23.0),
+        (min_x - width / 2 - 14.0, min_y + (max_y - min_y) * 0.28),
+        (max_x + width / 2 + 14.0, min_y + (max_y - min_y) * 0.28),
+        (center_x, max_y + 28.0),
+    ]
+    node_boxes = [
+        {
+            "min_x": positions[node_id][0] - 52.0,
+            "max_x": positions[node_id][0] + 52.0,
+            "min_y": positions[node_id][1] - 34.0,
+            "max_y": positions[node_id][1] + 42.0,
+        }
+        for node_id in positions
+    ]
+    ranked: list[tuple[float, float, float, dict[str, float]]] = []
+    for index, (x, y) in enumerate(candidates):
+        box = {
+            "min_x": x - width / 2,
+            "max_x": x + width / 2,
+            "min_y": y - height + 5.0,
+            "max_y": y + 5.0,
+        }
+        collisions = sum(1 for item in node_boxes if _boxes_intersect(box, item, 5.0))
+        collisions += sum(3 for item in occupied if _boxes_intersect(box, item, 8.0))
+        distance = math.hypot(x - center_x, y - center_y)
+        ranked.append((collisions * 10_000.0 + distance + index * 0.01, x, y, box))
+    _, x, y, selected_box = min(ranked, key=lambda item: item[0])
+    occupied.append(selected_box)
+    connector_target = min(
+        hull,
+        key=lambda point: math.hypot(float(point["x"]) - x, float(point["y"]) - y),
+    )
+    anchor = {
+        "x": round(x, 2),
+        "y": round(y, 2),
+        "text_anchor": "middle",
+        "bbox": {key: round(value, 2) for key, value in selected_box.items()},
+    }
+    connector = {
+        "x1": round(float(connector_target["x"]), 2),
+        "y1": round(float(connector_target["y"]), 2),
+        "x2": round(x, 2),
+        "y2": round(y - 7.0, 2),
+    }
+    return anchor, connector
 
 
 def _region_overlap_summary(regions: list[dict[str, Any]]) -> dict[str, Any]:
@@ -410,7 +492,7 @@ def build_map_layout_snapshot(
     boundary = 1_000_000 if through_segment is None else max(0, through_segment)
     places = [dict(row) for row in connection.execute(
         """
-        SELECT id, name, first_segment FROM entities
+        SELECT id, name, importance, first_segment FROM entities
         WHERE book_id = ? AND kind = 'place' AND first_segment <= ? ORDER BY id
         """,
         (book_id, boundary),
@@ -488,6 +570,26 @@ def build_map_layout_snapshot(
         for place in places
     ]
     name_by_id = {int(place["id"]): str(place["name"]) for place in places}
+    first_segment_by_id = {int(place["id"]): int(place["first_segment"]) for place in places}
+    importance_by_id = {int(place["id"]): float(place.get("importance") or 0.0) for place in places}
+    story_visit_count = Counter(story_locations)
+    connection_count: Counter[int] = Counter()
+    for source, target in edges:
+        connection_count[source] += 1
+        connection_count[target] += 1
+
+    def representative_places(member_ids: list[int]) -> list[int]:
+        ranked = sorted(
+            member_ids,
+            key=lambda node_id: (
+                -story_visit_count[node_id],
+                -importance_by_id.get(node_id, 0.0),
+                -connection_count[node_id],
+                first_segment_by_id.get(node_id, 1_000_000),
+                node_id,
+            ),
+        )
+        return ranked[:2]
     relation_ids_by_container: dict[int, list[int]] = defaultdict(list)
     children_by_container: dict[int, set[int]] = defaultdict(set)
     for relation in relations:
@@ -514,9 +616,13 @@ def build_map_layout_snapshot(
             "y": round(sum(point["y"] for point in hull) / len(hull), 2),
         }
         parent_container = parent.get(container)
+        display_name = name_by_id.get(container, f"地点 {container}")
         regions.append({
             "id": containment_region_ids[container],
-            "label": name_by_id.get(container, f"区域 {container}"),
+            "label": display_name,
+            "display_name": display_name,
+            "representative_node_ids": [container],
+            "naming_basis": "explicit_container_name",
             "kind": "evidence_containment",
             "region_kind": "evidence_containment",
             "node_ids": members,
@@ -543,9 +649,14 @@ def build_map_layout_snapshot(
                 "x": round(sum(point["x"] for point in hull) / len(hull), 2),
                 "y": round(sum(point["y"] for point in hull) / len(hull), 2),
             }
+            representatives = representative_places(component)
+            display_name = "—".join(name_by_id[node_id] for node_id in representatives)
             regions.append({
                 "id": f"topology-{index + 1}",
-                "label": f"故事拓扑片区 {index + 1}",
+                "label": display_name,
+                "display_name": display_name,
+                "representative_node_ids": representatives,
+                "naming_basis": "representative_story_places",
                 "kind": "topological_cluster",
                 "region_kind": "story_cluster",
                 "node_ids": component,
@@ -563,6 +674,18 @@ def build_map_layout_snapshot(
                 "formal_geography": False,
                 "evidence_level": "semantic",
             })
+    occupied_label_boxes: list[dict[str, float]] = []
+    for region in sorted(regions, key=lambda item: (int(item["containment_depth"]), str(item["id"]))):
+        anchor, connector = _region_label_geometry(
+            str(region["display_name"]),
+            list(region["hull"]),
+            [int(node_id) for node_id in region["node_ids"]],
+            positions,
+            occupied_label_boxes,
+        )
+        region["label_anchor"] = anchor
+        region["label_connector"] = connector
+
     assigned_node_ids = {
         int(node_id)
         for region in regions
@@ -593,10 +716,17 @@ def build_map_layout_snapshot(
     max_world_x = max((node["x"] + label_padding_x for node in nodes), default=1080.0)
     min_world_y = min((node["y"] - label_padding_y for node in nodes), default=0.0)
     max_world_y = max((node["y"] + label_padding_y for node in nodes), default=700.0)
+    region_label_boxes = [region["label_anchor"]["bbox"] for region in regions if region.get("label_anchor")]
+    region_hull_points = [point for region in regions for point in region.get("hull", [])]
+    min_world_x = min([min_world_x, *(float(box["min_x"]) - 20.0 for box in region_label_boxes), *(float(point["x"]) - 20.0 for point in region_hull_points)])
+    max_world_x = max([max_world_x, *(float(box["max_x"]) + 20.0 for box in region_label_boxes), *(float(point["x"]) + 20.0 for point in region_hull_points)])
+    min_world_y = min([min_world_y, *(float(box["min_y"]) - 20.0 for box in region_label_boxes), *(float(point["y"]) - 20.0 for point in region_hull_points)])
+    max_world_y = max([max_world_y, *(float(box["max_y"]) + 20.0 for box in region_label_boxes), *(float(point["y"]) + 20.0 for point in region_hull_points)])
+    topology_regions = {tuple(region["node_ids"]): region for region in regions if region["kind"] == "topological_cluster"}
     aggregates = [
         {
             "id": f"aggregate-{index + 1}",
-            "label": f"故事区域 {index + 1}",
+            "label": topology_regions.get(tuple(component), {}).get("display_name") or name_by_id.get(component[0], "地点组"),
             "member_node_ids": component,
             "x": round(sum(positions[item][0] for item in component) / len(component), 2),
             "y": round(sum(positions[item][1] for item in component) / len(component), 2),

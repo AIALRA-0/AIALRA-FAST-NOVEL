@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS books (
     folder_id INTEGER REFERENCES library_folders(id) ON DELETE SET NULL,
     segment_count INTEGER NOT NULL DEFAULT 0,
     character_count INTEGER NOT NULL DEFAULT 0,
+    language TEXT NOT NULL DEFAULT '',
+    corpus_kind TEXT NOT NULL DEFAULT 'user_upload',
+    license_name TEXT NOT NULL DEFAULT '',
+    source_url TEXT NOT NULL DEFAULT '',
+    rights_status TEXT NOT NULL DEFAULT 'user_supplied',
+    source_sha256 TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -1432,6 +1438,12 @@ def _migrate_library_columns(connection: sqlite3.Connection) -> None:
     additions = (
         "folder_id INTEGER REFERENCES library_folders(id) ON DELETE SET NULL",
         "updated_at TEXT NOT NULL DEFAULT ''",
+        "language TEXT NOT NULL DEFAULT ''",
+        "corpus_kind TEXT NOT NULL DEFAULT 'user_upload'",
+        "license_name TEXT NOT NULL DEFAULT ''",
+        "source_url TEXT NOT NULL DEFAULT ''",
+        "rights_status TEXT NOT NULL DEFAULT 'user_supplied'",
+        "source_sha256 TEXT NOT NULL DEFAULT ''",
     )
     for definition in additions:
         column = definition.split()[0]
@@ -1439,6 +1451,13 @@ def _migrate_library_columns(connection: sqlite3.Connection) -> None:
             connection.execute(f"ALTER TABLE books ADD COLUMN {definition}")
     connection.execute(
         "UPDATE books SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''"
+    )
+    connection.execute(
+        """
+        UPDATE books SET corpus_kind = 'synthetic', rights_status = 'synthetic',
+            license_name = '系统虚构，不对应真实作品', language = 'zh-CN'
+        WHERE author IN ('系统虚构样例', '系统大型联动样例')
+        """
     )
     connection.execute("CREATE INDEX IF NOT EXISTS idx_books_folder ON books(folder_id, updated_at)")
 

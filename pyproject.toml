@@ -1,6 +1,6 @@
 [project]
 name = "novel-atlas"
-version = "2.9.1-rc.2"
+version = "2.9.2-rc.1"
 description = "带原文证据的超长篇小说人物、时间与地点知识系统"
 requires-python = ">=3.11"
 dependencies = [

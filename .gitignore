@@ -12,7 +12,7 @@ data/*.log
 data/*credentials*.json
 data/backups/
 data/uploads/
-data/samples/*.txt
+data/samples/
 node_modules/
 dist/
 dist-*/

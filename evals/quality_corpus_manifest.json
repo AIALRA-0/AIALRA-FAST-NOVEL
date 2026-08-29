@@ -1,61 +1,21 @@
 {
-  "schema_version": 1,
-  "suite_id": "mixed-five-work-quality-v1",
+  "schema_version": 2,
+  "suite_id": "cross-genre-twelve-work-quality-v2",
   "purpose": "正式内容质量评测，不用于书库导入或界面冒烟测试",
-  "case_policy": {
-    "cases_per_work": 60,
-    "development_cases_per_work": 48,
-    "sealed_holdout_cases_per_work": 12,
-    "total_cases": 300,
-    "total_sealed_holdout_cases": 60,
-    "human_confirmation_required": true,
-    "second_review_required_for": ["critical", "sealed_holdout"]
-  },
+  "case_policy": {"cases_per_work":25,"development_cases_per_work":20,"sealed_holdout_cases_per_work":5,"total_cases":300,"total_sealed_holdout_cases":60,"human_confirmation_required":true,"second_review_required_for":["critical","sealed_holdout"]},
   "works": [
-    {
-      "slot": "classic-journey",
-      "title": "西游记",
-      "work_type": "中国古典长篇",
-      "source_policy": "public_domain_local_copy",
-      "authorization_state": "available",
-      "focus": ["主线行程", "地域包含", "时间顺序", "身份与别名"]
-    },
-    {
-      "slot": "classic-family",
-      "title": "红楼梦",
-      "work_type": "中国古典长篇",
-      "source_policy": "public_domain_local_copy",
-      "authorization_state": "available",
-      "focus": ["家族关系", "称谓反向语义", "密集人物", "并行叙事"]
-    },
-    {
-      "slot": "classic-multiline",
-      "title": "三国演义",
-      "work_type": "中国古典长篇",
-      "source_policy": "public_domain_local_copy",
-      "authorization_state": "available",
-      "focus": ["联盟与敌对", "主从变化", "多线行程", "势力层级"]
-    },
-    {
-      "slot": "modern-fantasy",
-      "title": null,
-      "work_type": "现代玄幻长篇",
-      "source_policy": "user_authorized_local_copy_only",
-      "authorization_state": "waiting_for_authorized_work",
-      "focus": ["力量体系", "等级变化", "跨卷记忆", "物品与技能"]
-    },
-    {
-      "slot": "modern-urban-or-translated",
-      "title": null,
-      "work_type": "现代都市或翻译长篇",
-      "source_policy": "user_authorized_local_copy_only",
-      "authorization_state": "waiting_for_authorized_work",
-      "focus": ["现代场景", "隐含关系", "非结构化叙事", "语言风格差异"]
-    }
+    {"slot":"zh-classic-journey","title":"西游记","language":"zh-CN","genre":"幻想长篇","coverage_role":"direct","focus":["主线行程","身份变化","时间顺序"]},
+    {"slot":"zh-classic-family","title":"红楼梦","language":"zh-CN","genre":"家族长篇","coverage_role":"direct","focus":["家族关系","并行叙事","称谓"]},
+    {"slot":"zh-classic-ensemble","title":"水浒传","language":"zh-CN","genre":"大型群像","coverage_role":"direct","focus":["势力归属","群像关系"]},
+    {"slot":"zh-classic-war","title":"三国演义","language":"zh-CN","genre":"战争多线","coverage_role":"direct","focus":["联盟变化","主从变化","多线行程"]},
+    {"slot":"zh-classic-anthology","title":"聊斋志异","language":"zh-CN","genre":"短篇合集","coverage_role":"direct","focus":["故事边界","梦境与异事"]},
+    {"slot":"zh-classic-women-fantasy","title":"镜花缘","language":"zh-CN","genre":"女性群像幻想","coverage_role":"proxy","focus":["女性群像","幻想体系","异域行程"]},
+    {"slot":"zh-urban-serial","title":"海上花列传","language":"zh-CN","genre":"都市社会连载","coverage_role":"proxy","focus":["都市场景","女性群像","方言"]},
+    {"slot":"en-women-social","title":"Pride and Prejudice","language":"en","genre":"女性视角社会小说","coverage_role":"proxy","focus":["情感关系","社会阶层"]},
+    {"slot":"en-detective-anthology","title":"The Adventures of Sherlock Holmes","language":"en","genre":"都市推理短篇","coverage_role":"proxy","focus":["案件边界","证据因果","都市地点"]},
+    {"slot":"en-serial-fantasy","title":"A Princess of Mars","language":"en","genre":"连载幻想冒险","coverage_role":"proxy","focus":["快速行程","等级冲突"]},
+    {"slot":"ja-light-fantasy","title":"銀河鉄道の夜","language":"ja","genre":"轻幻想","coverage_role":"proxy","focus":["梦境时间","日文实体"]},
+    {"slot":"en-open-web-fiction","title":"The Spiraling Web","language":"en","genre":"开放网络科幻","coverage_role":"proxy","focus":["现代科技世界观","线上线下身份"]}
   ],
-  "claim_boundary": {
-    "before_all_slots_authorized": "只能报告古典小说覆盖率",
-    "before_300_human_confirmed": "不得显示达到95%正式质量门",
-    "browser_acceptance": "只证明部署与交互，不证明小说分析准确率"
-  }
+  "claim_boundary": {"commercial_genres":"开放代理样本与现代商业文体必须分开统计","before_300_human_confirmed":"不得显示达到95%正式质量门","browser_acceptance":"只证明部署与交互，不证明小说分析准确率"}
 }

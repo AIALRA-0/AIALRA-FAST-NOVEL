@@ -182,9 +182,11 @@ h1 { margin: .28rem 0 .35rem; font: 600 clamp(1.65rem, 3vw, 2.55rem) Georgia, "N
 .chip.blue { color: #355b78; background: #e2edf5; }
 
 /* 地图播放器在同一画面中同步人物位置、路线状态和当步事件。 */
-.journey-controls { display: grid; grid-template-columns: auto auto auto minmax(150px, 1fr) auto auto; gap: .55rem; align-items: center; padding: .75rem 1.2rem; border-bottom: 1px solid var(--line); background: #fbfcfa; }
+.journey-controls { display: grid; grid-template-columns: auto auto auto minmax(150px, 1fr) auto auto minmax(84px, auto) auto; gap: .55rem; align-items: center; padding: .75rem 1.2rem; border-bottom: 1px solid var(--line); background: #fbfcfa; }
 .journey-controls input { accent-color: var(--green-2); }
 .journey-controls strong { min-width: 56px; color: var(--green); font-size: .72rem; text-align: right; }
+.playback-speed-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+#map-playback-speed { min-width: 84px; min-height: 44px; }
 .journey-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 380px); min-height: 620px; }
 .map-stage { position: relative; display: grid; min-height: 565px; padding: 1rem; background: linear-gradient(180deg, #f7fbf9, #f4f7f2); }
 .map-svg { width: 100%; min-height: 520px; border-radius: 12px; cursor: grab; touch-action: none; user-select: none; }
@@ -838,8 +840,16 @@ body[data-view="map"] .topbar p { font-size: .78rem; }
 .semantic-region.is-secondary path { fill-opacity: .18; stroke-opacity: .46; }
 .semantic-region.is-active path, .semantic-region:hover path, .semantic-region:focus-visible path { fill-opacity: .58; stroke-opacity: 1; stroke-width: 2.2; }
 .semantic-region:focus-visible { outline: none; }
-.semantic-region-label { fill: #30302e; paint-order: stroke; stroke: rgba(247,247,245,.94); stroke-width: 4px; text-anchor: middle; font-size: 11px; font-weight: 800; pointer-events: none; }
-.semantic-region.is-secondary .semantic-region-label { opacity: .58; }
+.semantic-region-label-wrap { pointer-events: none; }
+.semantic-region-label { fill: #20201f; text-anchor: middle; font-size: 11px; font-weight: 800; pointer-events: none; }
+.semantic-region-label-bg { fill: rgba(255,255,255,.94); stroke: rgba(30,30,29,.2); stroke-width: 1px; }
+.semantic-region-label-connector { stroke: rgba(30,30,29,.38); stroke-width: 1px; stroke-dasharray: 3 3; }
+.semantic-region.is-secondary .semantic-region-label-wrap { opacity: .5; }
+.semantic-region.is-active > path { fill-opacity: .28; stroke-width: 4px; filter: drop-shadow(0 2px 5px rgba(0,0,0,.14)); }
+.semantic-region.is-active .semantic-region-label-bg { stroke-width: 2px; stroke: #d86a12; }
+.semantic-region.is-active .semantic-region-label { fill: #8f3d00; }
+.semantic-region.is-ancestor > path { fill-opacity: .14; stroke-width: 2.5px; }
+.semantic-region.is-last-known > path { fill-opacity: .035; stroke-width: 2px; stroke-dasharray: 5 4; }
 .semantic-region.region-0 path { fill: #dfeefa; stroke: #85add1; }
 .semantic-region.region-1 path { fill: #ece2f5; stroke: #aa86c2; }
 .semantic-region.region-2 path { fill: #f7ead7; stroke: #caa061; }
@@ -948,7 +958,7 @@ body[data-view="map"] .topbar p { font-size: .78rem; }
 .progress-copy strong { flex-basis: 100%; }
 .progress-count, #progress-count { cursor: text; border-radius: 6px; padding: .15rem .3rem; }
 #progress-count:hover { background: rgba(255,255,255,.1); }
-.progress-edit { min-height: 28px; padding: .2rem .45rem; border: 1px solid rgba(255,255,255,.3); border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: .75rem; cursor: pointer; }
+#progress-count:focus-visible { outline: 2px solid #ffffff; outline-offset: 3px; }
 .progress-inline-input { width: 5.4rem; min-height: 34px; border: 1px solid #777; border-radius: 7px; padding: .3rem .45rem; background: #fff; color: #111; font: inherit; }
 
 dialog.source-dialog { max-height: min(88vh, 860px); padding: 0; overflow: hidden; border: 1px solid #c9c9c4; border-radius: 16px; }

@@ -1,42 +1,38 @@
 {
   "schema_version": 1,
   "product": "小说证据图谱",
-  "release": "2.9.1-rc.2",
+  "release": "2.9.2-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "release-v2.9.1-rc.2-524e7c3b08c772a01a0ab6a7e362e8eb4992e2a7",
-  "active_objective": "交付地图控制栏防重叠、全部区域可见、可信金标准状态和混合五书评测范围",
+  "source_commit": "local-candidate-awaiting-release-commit",
+  "active_objective": "交付区域随编年联动、真实地点区域命名、区域外标签、四档播放速度和十二部跨文体开放语料",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
     "map_2d_source": "overview.story_map_steps",
     "map_3d_source": "overview.story_map_steps",
     "unknown_policy": "未知不补猜",
-    "public_data_policy": "只允许空库或合成演示数据"
+    "public_data_policy": "公开仓库和未登录访问不含全文；Authentik后的私有书库允许来源与许可完整的开放作品"
   },
   "quality_gate": {
-    "unit_tests": "passed:125;skipped:1-environment-dependent;collected:126",
+    "unit_tests": "in-progress",
     "javascript_syntax": "passed",
-    "browser_flows": "passed:7;skipped:3-specialized-long-form-environment",
-    "responsive_map_controls": "passed:5-viewports-by-4-effective-zoom-levels;20-bounding-box-checks",
-    "map_region_visibility": "passed:large-demo-4-generated-4-visible-2d-3d",
-    "map_step_parity": "passed:shared-StoryMapStep-2d-3d-chronology",
-    "real_corpus_import": "passed:5-public-domain-books;1011-segments;3283083-characters",
-    "benchmark_migration": "passed:28-machine-candidates;0-provable-human-confirmed;0-valid-sealed-holdouts",
-    "formal_quality_corpus": "defined:3-classics;2-user-authorized-modern-slots;300-total;60-sealed-holdouts",
-    "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60;2-modern-slots-await-authorization",
-    "safe_publish": "passed:584-approved;0-review;0-block;0-coverage-gap",
-    "github_ci": "passed:quality-gate-run-33211171717",
-    "vps_container": "passed:2.9.1-rc.2-ready-healthy-corpus-endpoint-available",
-    "public_authentication": "partial:2.9.1-anonymous-home-api-health-redirect-to-authentik;authenticated-browser-acceptance-pending"
+    "browser_flows": "in-progress",
+    "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
+    "map_region_naming": "passed:no-numbered-topology-placeholder;external-label-anchor-and-connector",
+    "playback_speed": "passed:0.5x-1x-1.5x-2x-persisted-without-step-reset",
+    "spoiler_progress": "passed:visible-edit-button-removed;double-click-and-keyboard-edit-retained",
+    "real_corpus_import": "passed:12-open-works;1868-segments;cross-language-txt-html-epub",
+    "formal_quality_corpus": "defined:12-works;25-cases-each;300-total;60-sealed-holdouts;5-direct-7-proxy",
+    "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
   },
   "publication": {
-    "github": "public-repository",
-    "github_commit": "524e7c3b08c772a01a0ab6a7e362e8eb4992e2a7",
-    "github_release": "published-v2.9.1-rc.2-prerelease",
-    "deployment": "vps-running-2.9.1-rc.2-from-524e7c3",
+    "github": "pending-v2.9.2-rc.1",
+    "github_commit": "pending",
+    "github_release": "pending",
+    "deployment": "vps-still-running-2.9.1-rc.2",
     "hostname": "novel.aialra.online",
     "authentication": "Authentik gateway",
-    "rollback": "pre-rc2-data-backup-and-2.9.1-rc.1-image-release-retained"
+    "rollback": "2.9.1-rc.2-image-and-pre-deploy-data-backup-required"
   },
   "last_updated": "2026-08-28"
 }
