@@ -111,7 +111,7 @@ test("三层知识库可检索并在固定右栏显示证据、编辑和历史",
 test("切换书籍遇到慢接口时知识详情不会串到上一本书", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await page.route(/\/api\/books\/\d+\/concepts\?/, async (route) => {
+  await page.route(/\/api\/books\/\d+\/concepts/, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     await route.continue();
   });
