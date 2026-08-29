@@ -112,13 +112,13 @@ test("切换书籍遇到慢接口时知识详情不会串到上一本书", async
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.route(/\/api\/books\/\d+\/concepts\?/, async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 450));
+    await new Promise((resolve) => setTimeout(resolve, 2500));
     await route.continue();
   });
 
   await page.locator("#book-select").selectOption({ label: "长夜十二城 · 120章大型压力演示" });
   await page.locator('.nav-item[data-view="database"]').click();
-  await expect(page.locator(".concept-row")).toHaveCount(0);
+  await expect(page.locator(".concept-row")).toHaveCount(0, { timeout: 1000 });
   await expect(page.locator("#view-panel")).toContainText("正在读取这本书的知识结构");
 
   await expect(page.locator(".knowledge-workspace")).toBeVisible();
