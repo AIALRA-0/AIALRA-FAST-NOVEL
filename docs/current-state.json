@@ -16,19 +16,19 @@
   "quality_gate": {
     "unit_tests": "passed:136;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
-    "browser_flows": "passed:9;skipped:2-require-legacy-fully-analyzed-thousand-step-fixture;local-and-vps-tunnel",
+    "browser_flows": "passed:9;skipped:2-require-legacy-fully-analyzed-thousand-step-fixture;local-and-vps-tunnel;github-public-suite-passed:8-skipped:3-private-fixtures",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
     "map_region_naming": "passed:no-numbered-topology-placeholder;external-label-anchor-and-connector",
     "playback_speed": "passed:0.5x-1x-1.5x-2x-persisted-without-step-reset",
     "spoiler_progress": "passed:visible-edit-button-removed;double-click-and-keyboard-edit-retained",
-    "real_corpus_import": "passed:12-open-works;1868-segments;142-analyzed-segments;5973-real-corpus-evidence-links;0-failed-jobs;cross-language-txt-html-epub",
+    "real_corpus_import": "passed:12-open-works;1868-segments;142-analyzed-segments;6146-real-corpus-evidence-links;0-exact-quote-misses;0-failed-jobs;cross-language-txt-html-epub",
     "formal_quality_corpus": "defined:12-works;25-cases-each;300-total;60-sealed-holdouts;5-direct-7-proxy",
     "gold_evaluation": "blocked:0-human-confirmed-of-300;0-valid-holdout-of-60"
   },
   "publication": {
     "github": "v2.9.2-rc.1-release-candidate",
-    "github_commit": "resolved-by-v2.9.2-rc.1-tag",
+    "github_commit": "resolved-by-v2.9.2-rc.1-tag;quality-gate-passed",
     "github_release": "https://github.com/AIALRA-0/AIALRA-FAST-NOVEL/releases/tag/v2.9.2-rc.1",
     "deployment": "vps-running-2.9.2-rc.1-release-a49d1ab",
     "hostname": "novel.aialra.online",
