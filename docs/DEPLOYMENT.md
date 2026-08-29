@@ -19,11 +19,15 @@
 
 ## 2.9.2 候选版部署记录
 
-- 当前发布目录为 `/srv/aialra/apps/novel-atlas/releases/2.9.2-rc.1-a49d1ab`
+- 当前发布目录为 `/srv/aialra/apps/novel-atlas/releases/2.9.2-rc.1-a8f1261-map-overlap`
 - 容器镜像为 `aialra/novel-atlas:2.9.2-rc.1`
+- 当前镜像摘要为 `8474309dd8a0`
 - 应用继续只监听 VPS 的 `127.0.0.1:18765`
 - 容器用户为 `10001:10001`，根文件系统只读
-- 发布前备份为 `/srv/aialra/apps/novel-atlas/backups/20260829T033921Z-pre-final-2.9.2-rc.1`
+- 发布前备份为 `/srv/aialra/apps/novel-atlas/backups/20260829T081200Z-pre-map-overlap-lod12`
+- 上一镜像保留为 `aialra/novel-atlas:2.9.2-rc.1-pre-map-overlap-a49d1ab`
+- 公网书库保持 16 本书，地图接口使用 `semantic-atlas-v2.9.2-lod12`
+- 《西游记》部署后核验为 30 个地点、12 个区域、0 个未归区地点和 0 组无关区域重叠
 - 未登录访问根页面和书库接口都已验证重定向到 Authentik
 - 通过 SSH 隧道直连应用的 9 项浏览器流程已通过，2 项旧版千步全书压力条件未启用而跳过
 - Authentik 登录后的完整往返必须由用户现有登录会话人工确认，部署脚本不保存登录凭据

@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.2-rc.1",
   "status": "release_candidate_blocked_by_human_gold_evaluation_gate",
-  "source_commit": "a49d1ab-release-baseline-plus-final-state-docs",
+  "source_commit": "local-c4ee09e;public-a8f1261",
   "active_objective": "完成 2.9.2 候选版发布，并以人工金标准继续验证跨文体内容准确率",
   "contracts": {
     "fact_source": "原文证据",
@@ -29,12 +29,12 @@
   },
   "publication": {
     "github": "v2.9.2-rc.1-release-candidate",
-    "github_commit": "resolved-by-v2.9.2-rc.1-tag;quality-gate-passed",
+    "github_commit": "a8f1261;quality-gate-passed-run-33242588596",
     "github_release": "https://github.com/AIALRA-0/AIALRA-FAST-NOVEL/releases/tag/v2.9.2-rc.1",
-    "deployment": "vps-running-2.9.2-rc.1-release-a49d1ab",
+    "deployment": "vps-running-2.9.2-rc.1-release-a8f1261-map-overlap;image-8474309dd8a0",
     "hostname": "novel.aialra.online",
     "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-roundtrip-requires-user-session",
-    "rollback": "pre-final-data-backup-at-20260829T033921Z-and-previous-release-retained"
+    "rollback": "pre-map-overlap-data-backup-at-20260829T081200Z;previous-image-tag-pre-map-overlap-a49d1ab;previous-release-retained"
   },
   "last_updated": "2026-08-29"
 }
