@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
 from pathlib import Path
 import sys
 
@@ -196,7 +197,7 @@ def test_v292_map_layout_exposes_named_regions_and_external_label_geometry(tmp_p
             f"/api/books/{book_id}/map-layout",
             params={"through_segment": 119, "detail_level": "low", "focus": "current"},
         ).json()
-        assert atlas["layout_version"] == "semantic-atlas-v2.9.2-lod5"
+        assert atlas["layout_version"] == "semantic-atlas-v2.9.2-lod12"
         assert atlas["requested_detail_level"] == "low"
         assert atlas["requested_focus"] == "current"
         assert atlas["world_bounds"]["width"] > 0
@@ -210,7 +211,79 @@ def test_v292_map_layout_exposes_named_regions_and_external_label_geometry(tmp_p
         assert all(item["label_anchor"] and item["label_connector"] for item in atlas["regions"])
         assert atlas["region_coverage"]["visible_region_count"] == len(atlas["regions"])
         assert atlas["region_coverage"]["total_place_count"] == len(atlas["nodes"])
+        assert atlas["region_coverage"]["overlap"]["same_level_overlap_pairs"] == 0
+        assert not any(item["issue_type"] == "region_overlap" for item in atlas["quality_issues"])
         assert "unassigned_node_ids" in atlas
+        evidence_nodes = {
+            int(node_id)
+            for region in atlas["regions"]
+            if region["kind"] == "evidence_containment"
+            for node_id in region["node_ids"]
+        }
+        assert all(
+            not evidence_nodes.intersection(int(node_id) for node_id in region["node_ids"])
+            for region in atlas["regions"]
+            if region["kind"] == "topological_cluster"
+        )
+        node_positions = [(float(node["x"]), float(node["y"])) for node in atlas["nodes"]]
+        assert min(
+            math.hypot(left_x - right_x, left_y - right_y)
+            for index, (left_x, left_y) in enumerate(node_positions)
+            for right_x, right_y in node_positions[index + 1:]
+        ) >= 112.0
+        label_boxes = [region["label_anchor"]["bbox"] for region in atlas["regions"]]
+        assert all(
+            left["max_x"] <= right["min_x"]
+            or right["max_x"] <= left["min_x"]
+            or left["max_y"] <= right["min_y"]
+            or right["max_y"] <= left["min_y"]
+            for index, left in enumerate(label_boxes)
+            for right in label_boxes[index + 1:]
+        )
+
+
+def test_nested_place_regions_form_real_parent_child_frames(tmp_path: Path) -> None:
+    """Evidence-backed location chains render as nested frames, not crossing siblings."""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        with transaction(main.settings.database_path) as connection:
+            place_ids = {}
+            for name in ("测试外城", "测试内院", "测试密室"):
+                place_ids[name] = int(connection.execute(
+                    "INSERT INTO entities(book_id, kind, name, summary, importance, first_segment) VALUES (?, 'place', ?, ?, 0.8, 0)",
+                    (book_id, name, name),
+                ).lastrowid)
+            connection.execute(
+                "INSERT INTO place_relations(book_id, source_entity_id, target_entity_id, relative_position, summary, confidence, first_segment) VALUES (?, ?, ?, 'inside', ?, 0.95, 0)",
+                (book_id, place_ids["测试内院"], place_ids["测试外城"], "测试内院位于测试外城内"),
+            )
+            connection.execute(
+                "INSERT INTO place_relations(book_id, source_entity_id, target_entity_id, relative_position, summary, confidence, first_segment) VALUES (?, ?, ?, 'inside', ?, 0.95, 0)",
+                (book_id, place_ids["测试密室"], place_ids["测试内院"], "测试密室位于测试内院内"),
+            )
+
+        atlas = client.get(f"/api/books/{book_id}/map-layout", params={"through_segment": 4}).json()
+        regions = {region["display_name"]: region for region in atlas["regions"]}
+        outer = regions["测试外城"]
+        inner = regions["测试内院"]
+        assert set(outer["node_ids"]) >= set(inner["node_ids"])
+        assert inner["parent_region_id"] == outer["id"]
+
+        def bounds(region: dict) -> tuple[float, float, float, float]:
+            return (
+                min(float(point["x"]) for point in region["hull"]),
+                min(float(point["y"]) for point in region["hull"]),
+                max(float(point["x"]) for point in region["hull"]),
+                max(float(point["y"]) for point in region["hull"]),
+            )
+
+        outer_bounds = bounds(outer)
+        inner_bounds = bounds(inner)
+        assert outer_bounds[0] <= inner_bounds[0]
+        assert outer_bounds[1] <= inner_bounds[1]
+        assert outer_bounds[2] >= inner_bounds[2]
+        assert outer_bounds[3] >= inner_bounds[3]
 
 
 def test_v29_system_graph_and_story_context_are_evidence_and_spoiler_bounded(tmp_path: Path) -> None:

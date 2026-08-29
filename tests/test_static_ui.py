@@ -157,6 +157,8 @@ def test_v291_map_controls_flow_without_absolute_overlap_and_regions_stay_visibl
     assert ".map-stage .map-viewport-controls { position: static" in styles
     assert ".semantic-region.is-topology path" in styles
     assert ".semantic-region.is-evidence path" in styles
+    assert "stroke-opacity: .82" in styles
+    assert "vector-effect: non-scaling-stroke" in styles
     assert "syncMap2DRegions(event.location_entity_id)" in script
     assert "region.display_name || region.label" in script
 

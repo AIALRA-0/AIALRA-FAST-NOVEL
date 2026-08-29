@@ -10,7 +10,7 @@ from collections import Counter, defaultdict, deque
 from typing import Any
 
 
-LAYOUT_VERSION = "semantic-atlas-v2.9.2-lod5"
+LAYOUT_VERSION = "semantic-atlas-v2.9.2-lod12"
 _DIRECTION_VECTORS = {
     "north": (0.0, -1.0), "south": (0.0, 1.0),
     "east": (1.0, 0.0), "west": (-1.0, 0.0),
@@ -172,23 +172,28 @@ def _region_label_geometry(
 
 
 def _region_overlap_summary(regions: list[dict[str, Any]]) -> dict[str, Any]:
-    """Measure same-level story-region overlap with deterministic bounding boxes."""
+    """Measure avoidable region overlap while allowing evidence-backed nesting."""
 
-    topology = [region for region in regions if region.get("kind") == "topological_cluster"]
     overlaps: list[dict[str, Any]] = []
     maximum = 0.0
-    for index, left in enumerate(topology):
+    for index, left in enumerate(regions):
         left_hull = left.get("hull") or []
         if len(left_hull) < 3:
             continue
+        left_nodes = {int(node_id) for node_id in left.get("node_ids", [])}
         left_min_x = min(float(point["x"]) for point in left_hull)
         left_max_x = max(float(point["x"]) for point in left_hull)
         left_min_y = min(float(point["y"]) for point in left_hull)
         left_max_y = max(float(point["y"]) for point in left_hull)
         left_area = max(1.0, (left_max_x - left_min_x) * (left_max_y - left_min_y))
-        for right in topology[index + 1:]:
+        for right in regions[index + 1:]:
             right_hull = right.get("hull") or []
             if len(right_hull) < 3:
+                continue
+            right_nodes = {int(node_id) for node_id in right.get("node_ids", [])}
+            nested_by_membership = bool(left_nodes and right_nodes and (left_nodes <= right_nodes or right_nodes <= left_nodes))
+            nested_by_parent = left.get("parent_region_id") == right.get("id") or right.get("parent_region_id") == left.get("id")
+            if nested_by_membership or nested_by_parent:
                 continue
             right_min_x = min(float(point["x"]) for point in right_hull)
             right_max_x = max(float(point["x"]) for point in right_hull)
@@ -204,6 +209,8 @@ def _region_overlap_summary(regions: list[dict[str, Any]]) -> dict[str, Any]:
             overlaps.append({
                 "left_region_id": left["id"],
                 "right_region_id": right["id"],
+                "left_region_kind": left.get("kind"),
+                "right_region_kind": right.get("kind"),
                 "overlap_ratio_percent": round(ratio * 100, 2),
             })
     return {
@@ -440,6 +447,7 @@ def _separate_sibling_groups(
     positions: dict[int, tuple[float, float]],
     groups: list[list[int]],
     padding: float = 110.0,
+    skip_shared_members: bool = False,
 ) -> dict[int, tuple[float, float]]:
     """Move disjoint topology groups apart without changing membership or relative shape."""
 
@@ -456,6 +464,8 @@ def _separate_sibling_groups(
             boxes.append((members, min(xs) - padding, min(ys) - padding, max(xs) + padding, max(ys) + padding))
         for index, (left_members, left_min_x, left_min_y, left_max_x, left_max_y) in enumerate(boxes):
             for right_members, right_min_x, right_min_y, right_max_x, right_max_y in boxes[index + 1:]:
+                if skip_shared_members and set(left_members).intersection(right_members):
+                    continue
                 overlap_x = min(left_max_x, right_max_x) - max(left_min_x, right_min_x)
                 overlap_y = min(left_max_y, right_max_y) - max(left_min_y, right_min_y)
                 if overlap_x <= 0 or overlap_y <= 0:
@@ -482,6 +492,129 @@ def _separate_sibling_groups(
     min_x = min((point[0] for point in result.values()), default=0.0)
     min_y = min((point[1] for point in result.values()), default=0.0)
     return {node_id: (round(x - min_x + 100, 2), round(y - min_y + 100, 2)) for node_id, (x, y) in result.items()}
+
+
+def _separate_nodes(
+    positions: dict[int, tuple[float, float]],
+    minimum_distance: float = 118.0,
+) -> dict[int, tuple[float, float]]:
+    """Give every place enough room for its node and one readable label."""
+
+    result = dict(positions)
+    ordered = sorted(result)
+    for _ in range(160):
+        changed = False
+        for index, source in enumerate(ordered):
+            for target in ordered[index + 1:]:
+                source_x, source_y = result[source]
+                target_x, target_y = result[target]
+                dx = target_x - source_x
+                dy = target_y - source_y
+                distance = math.hypot(dx, dy)
+                if distance >= minimum_distance:
+                    continue
+                changed = True
+                if distance < 0.001:
+                    angle = _stable_unit(source, target, "collision") * math.tau
+                    dx, dy, distance = math.cos(angle), math.sin(angle), 1.0
+                shift = (minimum_distance - distance) / 2 + 1.0
+                move_x = dx / distance * shift
+                move_y = dy / distance * shift
+                result[source] = (source_x - move_x, source_y - move_y)
+                result[target] = (target_x + move_x, target_y + move_y)
+        if not changed:
+            break
+    return {node_id: (round(x, 2), round(y, 2)) for node_id, (x, y) in result.items()}
+
+
+def _compact_containment_families(
+    book_id: int,
+    positions: dict[int, tuple[float, float]],
+    children_by_container: dict[int, set[int]],
+    groups_by_container: dict[int, list[int]],
+    maximum_distance: float = 420.0,
+) -> dict[int, tuple[float, float]]:
+    """Keep evidence-backed children near their container without flattening hierarchy."""
+
+    result = dict(positions)
+    child_to_parent = {
+        child: container
+        for container, children in children_by_container.items()
+        for child in children
+    }
+    roots = [container for container in children_by_container if container not in child_to_parent]
+    pending = sorted(roots) + [container for container in sorted(children_by_container) if container not in roots]
+    visited: set[int] = set()
+    while pending:
+        container = pending.pop(0)
+        if container in visited or container not in result:
+            continue
+        visited.add(container)
+        container_x, container_y = result[container]
+        for child in sorted(children_by_container.get(container, set())):
+            if child not in result:
+                continue
+            child_x, child_y = result[child]
+            distance = math.hypot(child_x - container_x, child_y - container_y)
+            if distance > maximum_distance:
+                angle = _stable_unit(book_id, child, f"inside:{container}") * math.tau
+                target_x = container_x + math.cos(angle) * maximum_distance * 0.52
+                target_y = container_y + math.sin(angle) * maximum_distance * 0.52
+                move_x = target_x - child_x
+                move_y = target_y - child_y
+                for node_id in groups_by_container.get(child, [child]):
+                    if node_id not in result:
+                        continue
+                    x, y = result[node_id]
+                    result[node_id] = (x + move_x, y + move_y)
+            if child in children_by_container:
+                pending.append(child)
+
+    adjacency: dict[int, set[int]] = defaultdict(set)
+    for container, children in children_by_container.items():
+        for child in children:
+            adjacency[container].add(child)
+            adjacency[child].add(container)
+    remaining = set(adjacency)
+    while remaining:
+        first = min(remaining)
+        component: set[int] = set()
+        queue = [first]
+        while queue:
+            node_id = queue.pop()
+            if node_id in component:
+                continue
+            component.add(node_id)
+            queue.extend(adjacency[node_id] - component)
+        remaining -= component
+        visible = [node_id for node_id in component if node_id in result]
+        if len(visible) < 2:
+            continue
+        center_x = sum(result[node_id][0] for node_id in visible) / len(visible)
+        center_y = sum(result[node_id][1] for node_id in visible) / len(visible)
+        radius = max(math.hypot(result[node_id][0] - center_x, result[node_id][1] - center_y) for node_id in visible)
+        target_radius = maximum_distance * 0.72
+        if radius <= target_radius:
+            continue
+        scale = target_radius / radius
+        for node_id in visible:
+            x, y = result[node_id]
+            result[node_id] = (center_x + (x - center_x) * scale, center_y + (y - center_y) * scale)
+    return {node_id: (round(x, 2), round(y, 2)) for node_id, (x, y) in result.items()}
+
+
+def _merge_intersecting_groups(groups: list[list[int]]) -> list[list[int]]:
+    """Merge visual families that share a member so group separation stays stable."""
+
+    merged: list[set[int]] = []
+    for group in groups:
+        current = set(group)
+        touching = [item for item in merged if item.intersection(current)]
+        for item in touching:
+            current.update(item)
+            merged.remove(item)
+        merged.append(current)
+    return [sorted(group) for group in sorted(merged, key=lambda item: min(item))]
 
 
 def build_map_layout_snapshot(
@@ -550,8 +683,66 @@ def build_map_layout_snapshot(
     edges = [edge for edge in relation_edges + journey_edges + chronology_edges if edge[0] in valid_ids and edge[1] in valid_ids]
     components = _semantic_region_groups(node_ids, edges, story_locations)
     positions = _layout_nodes(book_id, node_ids, edges, relations, components)
-    positions = _separate_sibling_groups(positions, components)
+    positions = _separate_nodes(positions)
+    positions = _separate_sibling_groups(positions, components, padding=150.0)
     depths, parent = _containment_depths(node_ids, relations)
+    relation_ids_by_container: dict[int, list[int]] = defaultdict(list)
+    children_by_container: dict[int, set[int]] = defaultdict(set)
+    for relation in relations:
+        source = int(relation["source_entity_id"])
+        target = int(relation["target_entity_id"])
+        if relation["relative_position"] == "inside":
+            child, container = source, target
+        elif relation["relative_position"] == "contains":
+            child, container = target, source
+        else:
+            continue
+        children_by_container[container].add(child)
+        relation_ids_by_container[container].append(int(relation["id"]))
+
+    def containment_members(container: int) -> list[int]:
+        members = {container}
+        pending = list(children_by_container.get(container, set()))
+        while pending:
+            child = pending.pop()
+            if child in members:
+                continue
+            members.add(child)
+            pending.extend(children_by_container.get(child, set()))
+        return sorted(members)
+
+    containment_groups_by_container = {
+        container: containment_members(container)
+        for container in sorted(children_by_container)
+    }
+    containment_groups = list(containment_groups_by_container.values())
+    root_containment_groups = [
+        group
+        for container, group in containment_groups_by_container.items()
+        if parent.get(container) not in children_by_container
+    ]
+    root_containment_groups = _merge_intersecting_groups(root_containment_groups)
+    contained_node_ids = {node_id for group in containment_groups for node_id in group}
+    topology_components = [
+        [node_id for node_id in component if node_id not in contained_node_ids]
+        for component in components
+    ]
+    topology_components = [component for component in topology_components if component]
+    positions = _compact_containment_families(
+        book_id,
+        positions,
+        children_by_container,
+        containment_groups_by_container,
+    )
+    positions = _separate_nodes(positions)
+    positions = _separate_sibling_groups(
+        positions,
+        root_containment_groups + topology_components,
+        padding=138.0,
+    )
+    # Moving whole regions can bring nodes from different groups back together
+    # A final node pass restores enough room for every label
+    positions = _separate_nodes(positions)
     directional_ids = {
         int(item["source_entity_id"]) for item in relations if item["relative_position"] in _DIRECTION_VECTORS
     } | {
@@ -590,27 +781,22 @@ def build_map_layout_snapshot(
             ),
         )
         return ranked[:2]
-    relation_ids_by_container: dict[int, list[int]] = defaultdict(list)
-    children_by_container: dict[int, set[int]] = defaultdict(set)
-    for relation in relations:
-        source = int(relation["source_entity_id"])
-        target = int(relation["target_entity_id"])
-        if relation["relative_position"] == "inside":
-            child, container = source, target
-        elif relation["relative_position"] == "contains":
-            child, container = target, source
-        else:
-            continue
-        children_by_container[container].add(child)
-        relation_ids_by_container[container].append(int(relation["id"]))
-
     regions = []
     containment_region_ids = {container: f"containment-{container}" for container in children_by_container}
-    for index, container in enumerate(sorted(children_by_container)):
-        members = sorted({container, *children_by_container[container]})
-        hull = _region_boundary([positions[node_id] for node_id in members if node_id in positions], padding=46.0)
+    containment_hulls: dict[int, list[dict[str, float]]] = {}
+    ordered_containers = sorted(children_by_container, key=lambda node_id: (-depths.get(node_id, 0), node_id))
+    for index, container in enumerate(ordered_containers):
+        members = containment_groups_by_container[container]
+        boundary_points = [positions[node_id] for node_id in members if node_id in positions]
+        for child in children_by_container[container]:
+            boundary_points.extend(
+                (float(point["x"]), float(point["y"]))
+                for point in containment_hulls.get(child, [])
+            )
+        hull = _region_boundary(boundary_points, padding=46.0)
         if len(hull) < 3:
             continue
+        containment_hulls[container] = hull
         centroid = {
             "x": round(sum(point["x"] for point in hull) / len(hull), 2),
             "y": round(sum(point["y"] for point in hull) / len(hull), 2),
@@ -640,9 +826,7 @@ def build_map_layout_snapshot(
             "formal_geography": False,
             "evidence_level": "explicit",
         })
-    for index, component in enumerate(components):
-        if len(component) < 3:
-            continue
+    for index, component in enumerate(topology_components):
         hull = _region_boundary([positions[node_id] for node_id in component], padding=36.0)
         if len(hull) >= 3:
             centroid = {
@@ -707,7 +891,7 @@ def build_map_layout_snapshot(
             "issue_type": "region_overlap",
             "severity": "warning",
             "count": overlap_summary["same_level_overlap_pairs"],
-            "message": "同级故事区域存在超过 20% 的边界框重叠，需要重新整理布局",
+            "message": "无包含关系的区域存在超过 20% 的边界框重叠，需要重新整理布局",
         })
 
     label_padding_x = 88.0
