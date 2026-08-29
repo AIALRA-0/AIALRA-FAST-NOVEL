@@ -246,6 +246,12 @@ document.addEventListener("pointerdown", (event) => {
   if (state.activeSelectBox.popover.contains(event.target) || state.activeSelectBox.button.contains(event.target)) return;
   closeSelectBox();
 }, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !state.activeSelectBox) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeSelectBox({ restoreFocus: true });
+}, true);
 window.addEventListener("resize", () => state.activeSelectBox?.place());
 window.addEventListener("scroll", () => state.activeSelectBox?.place(), true);
 
