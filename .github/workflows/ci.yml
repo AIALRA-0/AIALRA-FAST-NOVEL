@@ -2,7 +2,7 @@ name: quality-gate
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, "release/**"]
   pull_request:
 
 permissions:
