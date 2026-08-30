@@ -10,19 +10,29 @@
 
 > 截图来自项目自带的 120 章合成压力演示，不含用户小说、账号、真实地址或模型密钥
 
-## 实际运行界面
+## 1. 实际运行界面
 
 以下截图均由当前版本在本机浏览器中实际运行后生成；画面只使用内置合成演示，保留真实布局、交互控件和数据密度，同时移除用户内容与运行环境信息
 
-| 人物关系与证据连线 | 世界知识与检索 |
-|---|---|
-| ![可拖动、缩放和悬停聚焦的人物关系图](docs/assets/novel-atlas-relationships.png) | ![可搜索、分类并查看证据的世界知识工作区](docs/assets/novel-atlas-knowledge.png) |
-| **三栏书库管理** | **零待处理时的质量页** |
-| ![文件夹、书籍列表和书籍详情组成的三栏书库](docs/assets/novel-atlas-library.png) | ![没有问题时不显示人工复核统计或专业处理工具的质量页](docs/assets/novel-atlas-quality.png) |
+![可拖动、缩放和悬停聚焦的人物关系图](docs/assets/novel-atlas-relationships.png)
 
-地图、关系、知识、书库和质量页来自同一次可复现的浏览器截图流程；维护者可以指定隔离演示地址并设置 `CAPTURE_README_SCREENSHOTS=1`，再运行 `tests/capture_readme_screenshots.spec.js` 重新生成
+*人物关系与证据连线；截图保留关系范围、视图控制和完整图谱*
 
-## 能解决什么
+![可搜索、分类并查看证据的世界知识工作区](docs/assets/novel-atlas-knowledge.png)
+
+*世界知识与检索；截图保留分类、搜索、统计和检索结果*
+
+![文件夹、书籍列表和书籍详情组成的三栏书库](docs/assets/novel-atlas-library.png)
+
+*三栏书库管理；文件夹、书籍列表和当前书籍资料在同一画面完整显示*
+
+![没有问题时不显示人工复核统计或专业处理工具的质量页](docs/assets/novel-atlas-quality.png)
+
+*零待处理时的质量页；只有真实待处理事项才会出现复核入口*
+
+地图、关系、知识、书库和质量页来自同一次可复现的浏览器截图流程；每张图只截取当前功能面板，完整保留面板标题、操作栏和可观察结果；维护者可以指定隔离演示地址并设置 `CAPTURE_README_SCREENSHOTS=1`，再运行 `tests/capture_readme_screenshots.spec.js` 重新生成
+
+## 2. 能解决什么
 
 | 模块 | 当前能力 | 明确边界 |
 |---|---|---|
@@ -36,7 +46,7 @@
 | 审核与设置 | 待处理事项说明问题、影响、建议、证据和操作；分析设置保留阅读规则、成本与运行记录 | 已自动解决的记录进入历史，冲突不会作为普通报错悬挂 |
 | 报告语言 | 每本书可以选择跟随原文、中文或 English；未来生成的报告与说明使用所选语言 | 人名、书名、用户文字和逐字证据保持原样；已有结果不会被静默改写 |
 
-## 一套事实，多个视图
+## 3. 一套事实，多个视图
 
 地图不是另一套剧情，2D、3D、编年列表和故事详情只读取同一份有序步骤
 
@@ -58,7 +68,7 @@ flowchart TD
 
 ![与二维地图共享步骤和语义色的三维视图](docs/assets/novel-atlas-map-3d.png)
 
-## 本机首次运行
+## 4. 本机首次运行
 
 需要 Python 3.11 或更新版本
 
@@ -77,7 +87,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 # 只在本机启动
 
 上传、删除、增量更新和模型调用都会改变本机数据或产生费用；先使用合成演示验证流程，正式操作前备份数据库，并只处理自己有权使用的作品
 
-## 模型通道与成本边界
+## 5. 模型通道与成本边界
 
 - DeepSeek 开放平台 API
 - Moonshot 开放平台 API
@@ -89,7 +99,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 # 只在本机启动
 
 模型密钥不会进入网页响应、数据库、仓库或安装包，公开部署默认不配置任何付费模型密钥
 
-## 容器运行
+## 6. 容器运行
 
 ```bash
 docker compose -f deploy/compose.yaml up -d --build # 构建并启动只绑定本机的容器
@@ -100,7 +110,7 @@ curl http://127.0.0.1:18765/readyz # 核对应用和数据库已经就绪
 
 部署、备份和回滚说明见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
-## 当前验证证据
+## 7. 当前验证证据
 
 ```powershell
 python -m pytest -q # 运行接口、数据迁移和产品合同测试
@@ -128,7 +138,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.
 
 《西游记》《红楼梦》《水浒传》《三国演义》《聊斋志异》属于直接覆盖，其余 7 部属于跨语言和相近文体代理，不能冒充现代商业网文、商业轻小说、现代女频或现代都市小说的直接验证
 
-## 数据与安全
+## 8. 数据与安全
 
 - 小说正文、数据库、上传文件、运行输出、密钥和构建产物不进入版本控制
 - 没有逐字证据的正式事实保持未知或待解决，不能猜测补全
@@ -138,7 +148,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.
 
 详细合同见 [docs/PRODUCT_CONTRACT.md](docs/PRODUCT_CONTRACT.md)，当前实现状态见 [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md)
 
-## 项目状态与许可
+## 9. 项目状态与许可
 
 模型抽取仍可能出错，复杂伏笔、同名人物、不可靠叙述和隐含地点需要人工复核
 

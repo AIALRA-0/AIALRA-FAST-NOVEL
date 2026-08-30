@@ -10,19 +10,29 @@ This is a runnable personal project, not a hosted multi-tenant service with a se
 
 > The screenshot uses the built-in synthetic 120-chapter stress demo and contains no user novel, account, real address, or model credential
 
-## Running product UI
+## 1. Running product UI
 
 Every screenshot below was captured from the current application running in a local browser; the screens preserve real layouts, controls, and data density while using only the built-in synthetic demo
 
-| Evidence-linked relationships | Searchable world knowledge |
-|---|---|
-| ![Draggable and zoomable relationship graph with hover focus](docs/assets/novel-atlas-relationships.png) | ![Searchable world-knowledge workspace with categories and evidence](docs/assets/novel-atlas-knowledge.png) |
-| **Three-pane library** | **Clean quality state** |
-| ![Folder tree, book list, and book details in the library workspace](docs/assets/novel-atlas-library.png) | ![Quality page without optional review counters or specialist tools when no issue exists](docs/assets/novel-atlas-quality.png) |
+![Draggable and zoomable relationship graph with hover focus](docs/assets/novel-atlas-relationships.png)
 
-The map, relationship, knowledge, library, and quality images come from one reproducible browser capture flow; maintainers can point it at an isolated demo, set `CAPTURE_README_SCREENSHOTS=1`, and run `tests/capture_readme_screenshots.spec.js`
+*Evidence-linked relationships; the capture keeps the scope, view controls, and complete graph visible*
 
-## What it does
+![Searchable world-knowledge workspace with categories and evidence](docs/assets/novel-atlas-knowledge.png)
+
+*Searchable world knowledge; categories, search, counters, and the matched result remain visible*
+
+![Folder tree, book list, and book details in the library workspace](docs/assets/novel-atlas-library.png)
+
+*Three-pane library; folders, books, and the selected-book details appear in one complete frame*
+
+![Quality page without optional review counters or specialist tools when no issue exists](docs/assets/novel-atlas-quality.png)
+
+*Clean quality state; review actions appear only when a real issue needs attention*
+
+The map, relationship, knowledge, library, and quality images come from one reproducible browser capture flow; each image targets the active product panel and keeps its heading, controls, and observable result visible; maintainers can point it at an isolated demo, set `CAPTURE_README_SCREENSHOTS=1`, and run `tests/capture_readme_screenshots.spec.js`
+
+## 2. What it does
 
 | Area | Current capability | Explicit boundary |
 |---|---|---|
@@ -36,7 +46,7 @@ The map, relationship, knowledge, library, and quality images come from one repr
 | Review and settings | Actionable items explain the problem, impact, recommendation, evidence, and available decisions | Resolved findings move to history; conflicts never remain as generic dangling errors |
 | Report language | Each book can use source language, Chinese, or English for future generated reports and explanations | Names, titles, user text, and verbatim evidence remain unchanged; existing results are never silently rewritten |
 
-## One fact sequence, several views
+## 3. One fact sequence, several views
 
 The map is not a second plot model. The chronology, 2D map, 3D map, and story details all read one ordered sequence
 
@@ -58,7 +68,7 @@ The guided 3D atlas reuses the same X/Y coordinates. Z represents evidenced cont
 
 ![3D view sharing chronology, coordinates, and semantic colors with 2D](docs/assets/novel-atlas-map-3d.png)
 
-## First local run
+## 4. First local run
 
 Python 3.11 or newer is required
 
@@ -77,7 +87,7 @@ Import supports TXT, Markdown, EPUB, HTML, DOCX, and text-layer PDF. Scanned-ima
 
 Uploads, deletion, incremental updates, and model calls can change local data or incur cost. Validate the workflow with synthetic demos first, back up the database before production use, and process only works you have the right to use
 
-## Model channels and cost boundary
+## 5. Model channels and cost boundary
 
 - DeepSeek Platform API
 - Moonshot Platform API
@@ -89,7 +99,7 @@ Cost Forecast 2.0 separates the median forecast, conservative ceiling, actual sp
 
 Model credentials are excluded from browser responses, the database, the repository, and release packages. Public deployments do not receive paid model credentials by default
 
-## Container run
+## 6. Container run
 
 ```bash
 docker compose -f deploy/compose.yaml up -d --build # Build and start the loopback-only container
@@ -100,7 +110,7 @@ The container binds only to `127.0.0.1:18765` and should be exposed through a co
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for deployment, backup, and rollback
 
-## Current verification evidence
+## 7. Current verification evidence
 
 ```powershell
 python -m pytest -q # Run API, migration, and product-contract tests
@@ -128,7 +138,7 @@ The ordinary quality page only shows missing evidence, identity conflicts, relat
 
 Five Chinese classics are direct coverage; the other seven works provide cross-language and adjacent-genre proxies. They do not constitute direct validation for contemporary commercial web fiction, light novels, women's fiction, or urban fiction
 
-## Data and security
+## 8. Data and security
 
 - Novel text, databases, uploads, run output, credentials, and build artifacts stay outside version control
 - A formal fact without an exact source passage remains unknown or unresolved
@@ -138,7 +148,7 @@ Five Chinese classics are direct coverage; the other seven works provide cross-l
 
 See [docs/PRODUCT_CONTRACT.md](docs/PRODUCT_CONTRACT.md) for the product contract and [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) for the current implementation state
 
-## Project status and license
+## 9. Project status and license
 
 Model extraction can still be wrong. Subtle foreshadowing, namesakes, unreliable narration, and implicit locations need human review
 

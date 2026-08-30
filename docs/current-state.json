@@ -27,7 +27,7 @@
     "incremental_update": "passed:append-insert-modify-delete-rename-reorder;unchanged-segments-reused;human-edits-preserved;evidence-reanchored",
     "review_center": "passed:identity-relationship-location-time-actionable-tasks;resolved-history;no-zero-warning",
     "zero_issue_surface": "passed:no-optional-review-counter;no-specialist-tools;no-zero-identity-card",
-    "readme_visuals": "passed:actual-browser-ui;synthetic-data-only;6-sanitized-pngs;reproducible-capture",
+    "readme_visuals": "passed:actual-browser-ui;synthetic-data-only;6-panel-targeted-sanitized-pngs;full-width-bilingual-readme;desktop-dark-light-mobile-render",
     "semantic_editor": "passed:entity-event-claim-place-relation-world-note-entry-and-story-structure-fields",
     "reader_evaluation_surface": "removed:internal-regression-only;no-reader-test-bank;no-reader-holdout-task;no-extra-overview-requests",
     "report_language": "passed:follow-source-zh-CN-en;prompt-hash-bound;verbatim-evidence-preserved",

@@ -25,17 +25,24 @@ async function sanitizePublicScreenshot(page) {
   });
 }
 
+async function captureProductPanel(page, path) {
+  const panel = page.locator("#view-panel");
+  await expect(panel).toBeVisible();
+  await panel.scrollIntoViewIfNeeded();
+  await sanitizePublicScreenshot(page);
+  await panel.screenshot({ path, animations: "disabled" });
+}
+
 test("生成 README 脱敏实机截图", async ({ page }) => {
   test.skip(process.env.CAPTURE_README_SCREENSHOTS !== "1" || !baseURL, "仅在维护者主动指定脱敏截图环境时运行");
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await selectSyntheticBook(page);
 
   await page.locator('.nav-item[data-view="relationships"]').click();
   await expect(page.locator(".force-graph-shell")).toBeVisible();
   await page.waitForTimeout(1200);
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-relationships.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-relationships.png");
 
   await page.locator('.nav-item[data-view="map"]').click();
   await expect(page.locator(".map-svg")).toBeVisible();
@@ -44,33 +51,25 @@ test("生成 README 脱敏实机截图", async ({ page }) => {
     slider.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await page.waitForTimeout(300);
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-map-2d.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-map-2d.png");
 
   await page.locator('.map-mode[data-mode="3d"]').click();
   await expect(page.locator("#map-3d canvas")).toBeVisible();
   await page.waitForTimeout(900);
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-map-3d.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-map-3d.png");
 
   await page.locator('.nav-item[data-view="database"]').click();
   await expect(page.locator(".knowledge-workspace")).toBeVisible();
   await page.locator("#entry-search").fill("核心危机");
-  await page.locator(".concept-row").first().click();
-  await expect(page.locator("#inspector")).toHaveClass(/open/);
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-knowledge.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-knowledge.png");
 
-  await page.locator("#inspector-close").click();
   await page.locator("#library-button").click();
   await expect(page.locator(".library-workspace")).toBeVisible();
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-library.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-library.png");
 
   await page.locator("#library-back").click();
   await page.locator('.nav-item[data-view="quality"]').click();
   await expect(page.locator(".release-decision")).toBeVisible();
   await expect(page.locator(".legacy-review-tools")).toHaveCount(0);
-  await sanitizePublicScreenshot(page);
-  await page.screenshot({ path: "docs/assets/novel-atlas-quality.png" });
+  await captureProductPanel(page, "docs/assets/novel-atlas-quality.png");
 });
