@@ -1,0 +1,145 @@
+{
+  "meta": {
+    "contract_version": "1.0",
+    "title": "小说证据图谱 2D/3D 收敛、公开发布与受保护部署审计",
+    "mode": "standard",
+    "as_of": "2026-08-26",
+    "status": "complete",
+    "scope": "StoryMapStep 双视图收敛、黑白无障碍界面、公开仓库内容、VPS 容器、Cloudflare DNS 与 Authentik 访问控制。",
+    "exclusions": ["不公开用户上传的小说、数据库、模型密钥或运行日志。", "不把缺少原文证据的坐标解释成真实地理。", "不在公开环境启用付费模型密钥。"]
+  },
+  "decision_problem": {
+    "project_classification": "已有本地数据产品的公开发布与生产部署",
+    "risk_level": "高：同时涉及事实表达、公开代码、域名、身份系统和用户数据边界。",
+    "decision_owner": "产品所有者",
+    "desired_outcome": "2D 与 3D 地图严格复用同一编年步骤，在黑白极简界面中可稳定操作；公开仓库不泄露私密内容；线上入口强制通过既有 Authentik。",
+    "current_state": "2.5.0 已能本地运行，但只有二维地图；页面视觉层级较松散；尚无公开仓库、容器健康检查或该项目的受保护线上入口。",
+    "decision": "采用一个 StoryMapStep 状态源、两个投影器；无方向证据时使用编年示意布局；公开环境仅部署空库；通过现有 Nginx 统一认证网关接入 Authentik。",
+    "success_metrics": [
+      "2D 与 3D 在相同步数显示相同事件、地点和人物，视图切换不触发模型调用。",
+      "快速连续点击后动画从当前画面位置继续，最终步骤与故事卡片一致。",
+      "桌面和窄屏的主要按钮不小于 40 像素，键盘焦点清晰可见。",
+      "Python、JavaScript、真实浏览器、容器健康和公开认证门禁全部通过。",
+      "公开仓库的受跟踪内容、历史和生成物通过秘密、身份和隐私扫描。"
+    ],
+    "constraints": ["所有正式事实必须回到原文证据。", "公开实例不得包含用户书库或模型密钥。", "域名必须走 HTTPS 和 Authentik。", "GitHub 发布必须来自一次性审查副本。"],
+    "irreversible_actions": ["创建公开 GitHub 仓库。", "创建公开 DNS 记录。"],
+    "research_budget": {
+      "overall_limit": "本地代码、真实浏览器、VPS 现状和直接相关官方设计文档；不扩大到无关 UI 框架。",
+      "parallel_capacity": 1,
+      "paid_or_private_access": ["本地源代码和合成测试数据库", "产品所有者授权的 VPS、Cloudflare 与 Authentik 配置"],
+      "cutoff_policy": "布局、可用性和部署方案都有直接证据并能被端到端测试后停止扩展检索。"
+    },
+    "reversal_evidence": ["任一视图需要独立事件状态才能正确工作。", "现有认证网关无法对新主机实施服务端强制认证。", "公开扫描发现无法可靠排除的用户数据或秘密。"]
+  },
+  "questions": [
+    {"id":"Q1","question":"怎样避免 2D、3D、编年和故事卡片再次分叉？","critical":true,"internal_probe":"检查状态源、步进、播放和快速点击路径。","external_probe":"核对 3D 图组件的动态更新、相机和交互能力。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-CODE","S-E2E"],"external_source_ids":["S-3DFG"],"internal_gap":"","external_gap":""},
+    {"id":"Q2","question":"黑白极简界面怎样保证不是只换颜色，而是更易操作？","critical":true,"internal_probe":"检查控件尺寸、间距、焦点、窄屏和地图标签。","external_probe":"核对成熟设计系统的间距、焦点和目标尺寸要求。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-E2E"],"external_source_ids":["S-W3C","S-CARBON","S-GOVUK"],"internal_gap":"","external_gap":""},
+    {"id":"Q3","question":"怎样把公开发布、VPS 和 Authentik 串成可回滚的安全路径？","critical":true,"internal_probe":"检查版本库、忽略项、VPS 端口、Nginx 片段和认证网关。","external_probe":"核对 Cloudflare 代理 DNS 与现有源站架构的适用边界。","internal_status":"answered","external_status":"answered","internal_source_ids":["S-REPO","S-VPS"],"external_source_ids":["S-CF"],"internal_gap":"","external_gap":""}
+  ],
+  "source_map": [
+    {"id":"M1","question_ids":["Q1"],"origin":"internal","channel":"源代码与浏览器","target":"共享步骤、动画竞态和视图切换","decision_use":"确定单状态源合同","priority":"high","access_status":"searched"},
+    {"id":"M2","question_ids":["Q1"],"origin":"external","channel":"官方项目文档","target":"3d-force-graph 动态图与交互","decision_use":"确认三维投影可行性","priority":"medium","access_status":"searched"},
+    {"id":"M3","question_ids":["Q2"],"origin":"external","channel":"标准与官方设计系统","target":"间距、焦点和点击目标","decision_use":"形成可测试的界面门禁","priority":"high","access_status":"searched"},
+    {"id":"M6","question_ids":["Q2"],"origin":"internal","channel":"浏览器端到端","target":"控件尺寸、焦点与窄屏排布","decision_use":"验证界面门禁","priority":"high","access_status":"searched"},
+    {"id":"M4","question_ids":["Q3"],"origin":"internal","channel":"仓库与 VPS 只读审计","target":"数据边界、容器、Nginx 和 Authentik","decision_use":"选择部署拓扑与回滚点","priority":"high","access_status":"searched"},
+    {"id":"M5","question_ids":["Q3"],"origin":"external","channel":"Cloudflare 官方文档","target":"代理 DNS 到现有源站","decision_use":"限定公网入口","priority":"medium","access_status":"searched"}
+  ],
+  "sources": [
+    {"id":"S-CODE","origin":"internal","title":"2.6.0 双视图实现检查","location":"static/app.js; static/styles.css","source_type":"source-code","retrieval_method":"本地直接检查","observed_content":"2D 与 3D 都从 storyMapSteps 和 mapStep 派生；三维 z 轴只表达包含层级；视图选择保存在本机且不调用模型。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"直接证明实现的数据与交互合同。","limitations":"源代码检查不能替代浏览器运行。","direct":true,"independence_group":"local-code"},
+    {"id":"S-E2E","origin":"internal","title":"合成长篇真实浏览器验收","location":"tests/e2e_ui.spec.js; output/playwright/v2.6-map-2d.png; output/playwright/v2.6-map-3d.png","source_type":"test-observation","retrieval_method":"Playwright 在 120 章合成书上运行","observed_content":"双视图保持相同步数和标题；快速连续前进后落在目标步骤；末步不永久转圈；窄屏按钮尺寸和焦点通过。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"直接覆盖本轮高风险交互。","limitations":"合成书不能证明任意真实小说抽取质量。","direct":true,"independence_group":"runtime-test"},
+    {"id":"S-REPO","origin":"internal","title":"版本库和发布表面检查","location":"local git working tree","source_type":"internal-artifact","retrieval_method":"跟踪文件、忽略项、差异和测试检查","observed_content":"数据库、上传文本、输出、密钥和构建目录均被忽略；公开产物将只来自一次性审查副本。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"界定公开内容。","limitations":"必须在最终提交后再次运行发布扫描。","direct":true,"independence_group":"local-repository"},
+    {"id":"S-VPS","origin":"internal","title":"ExampleOrg VPS 与统一认证拓扑检查","location":"authorized host: contabo-vps-aialra","source_type":"test-observation","retrieval_method":"只读检查 Docker、Nginx 和 Authentik 服务","observed_content":"VPS 已运行 Docker、Nginx、Authentik 和本机 13010 认证网关；现有站点通过三个共享 Nginx 片段实施登录和身份头。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"支持复用成熟统一入口。","limitations":"新主机仍需部署后公开验证。","direct":true,"independence_group":"authorized-infrastructure"},
+    {"id":"S-3DFG","origin":"external","title":"3d-force-graph 官方仓库","location":"https://github.com/vasturiano/3d-force-graph","source_type":"official-doc","retrieval_method":"公开官方仓库直接读取","observed_content":"组件支持 graphData、节点可见性、相机、点击、悬停和动态数据更新。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"支持将同一图数据投影为可交互三维视图。","limitations":"库不提供小说语义或地理真实性。","direct":true,"independence_group":"3d-force-graph-project"},
+    {"id":"S-W3C","origin":"external","title":"WCAG 2.2 Focus Appearance 与 Target Size","location":"https://www.w3.org/WAI/WCAG22/Understanding/focus-appearance.html","source_type":"official-doc","retrieval_method":"W3C 官方页面直接读取","observed_content":"焦点外观需要足够面积和对比；WCAG 2.2 增加 24×24 CSS 像素目标尺寸要求。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"为键盘焦点和操作尺寸提供下限。","limitations":"不是完整产品可用性评估。","direct":true,"independence_group":"w3c"},
+    {"id":"S-CARBON","origin":"external","title":"Carbon Design System Spacing","location":"https://carbondesignsystem.com/elements/spacing/overview/","source_type":"official-doc","retrieval_method":"官方文档直接读取","observed_content":"间距令牌建立在 2、4、8 的倍数上，用一致节奏表达信息层级。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"支持统一间距尺度。","limitations":"品牌风格不能直接照搬。","direct":true,"independence_group":"ibm-carbon"},
+    {"id":"S-GOVUK","origin":"external","title":"GOV.UK Design System Focus states","location":"https://design-system.service.gov.uk/get-started/focus-states/","source_type":"official-doc","retrieval_method":"官方文档直接读取","observed_content":"交互元素必须有一致、明显的键盘焦点，焦点样式不应被移除。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"支持高对比焦点环。","limitations":"其颜色方案不是本产品的唯一选择。","direct":true,"independence_group":"govuk"},
+    {"id":"S-CF","origin":"external","title":"Cloudflare DNS proxy status","location":"https://developers.cloudflare.com/dns/manage-dns-records/reference/proxied-dns-records/","source_type":"official-doc","retrieval_method":"Cloudflare 官方文档直接读取","observed_content":"代理 A/AAAA/CNAME 记录向客户端返回 Cloudflare 地址并把 HTTP 流量转发到源站。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"支持现有 Nginx 源站前的代理 DNS。","limitations":"不替代源站认证、TLS 和健康检查。","direct":true,"independence_group":"cloudflare"},
+    {"id":"SL-PROBLEM","origin":"external","title":"双视图与可用性问题检索记录","location":"tool:web.run/2026-08-26/problem","source_type":"search-log","retrieval_method":"公开网络检索","observed_content":"检索图形双视图状态、键盘焦点和点击目标要求。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"问题空间检索。","limitations":"搜索结果会变化。","direct":true,"independence_group":"web-problem"},
+    {"id":"SL-MECHANISM","origin":"external","title":"三维图和部署机制检索记录","location":"tool:web.run/2026-08-26/mechanism","source_type":"search-log","retrieval_method":"官方文档定向检索","observed_content":"检索 3d-force-graph 和 Cloudflare 代理 DNS 机制。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"机制检索。","limitations":"不替代本地实现验证。","direct":true,"independence_group":"web-mechanism"},
+    {"id":"SL-FAILURE","origin":"external","title":"失败模式检索记录","location":"tool:web.run/2026-08-26/failure","source_type":"search-log","retrieval_method":"官方标准和设计系统定向检索","observed_content":"检索不可见焦点、小点击目标、标签遮挡和动态视图漂移的失败模式。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"失败门禁设计。","limitations":"公开文档不覆盖产品全部业务。","direct":true,"independence_group":"web-failure"},
+    {"id":"SL-CODE","origin":"external","title":"三维图代码能力检索记录","location":"tool:web.run/2026-08-26/code","source_type":"search-log","retrieval_method":"公开官方仓库定向检索","observed_content":"检索 3d-force-graph 的数据、交互和动态更新接口。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"代码方案检索。","limitations":"不能证明本地实现正确。","direct":true,"independence_group":"web-code"},
+    {"id":"SL-ADJACENT","origin":"external","title":"相邻图可视化方案检索记录","location":"tool:web.run/2026-08-26/adjacent","source_type":"search-log","retrieval_method":"公开官方项目和设计系统检索","observed_content":"检索图可视化、二维到三维投影和状态共享的相邻方案。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"相邻方案边界。","limitations":"不覆盖闭源产品。","direct":true,"independence_group":"web-adjacent"},
+    {"id":"SL-PRODUCT","origin":"external","title":"MiroFish 产品架构检索记录","location":"tool:web.run/2026-08-25/product","source_type":"search-log","retrieval_method":"公开仓库定向检索","observed_content":"复核 MiroFish 的阶段化图谱流程，确认其不是同类小说证据阅读器。","date":"2026-08-25","accessed_at":"2026-08-26","applicability":"产品边界检索。","limitations":"公开仓库不等于全部产品决策。","direct":true,"independence_group":"web-product"},
+    {"id":"SL-RESEARCH","origin":"external","title":"叙事地图研究检索记录","location":"tool:web.run/2026-08-25/research","source_type":"search-log","retrieval_method":"公开论文与项目检索","observed_content":"复核以事件路线表达叙事地图的研究方向。","date":"2026-08-25","accessed_at":"2026-08-26","applicability":"研究边界检索。","limitations":"研究原型不等于生产实现。","direct":true,"independence_group":"web-research"},
+    {"id":"S-MIROFISH","origin":"external","title":"MiroFish 公开仓库","location":"https://github.com/666ghj/MiroFish","source_type":"product-page","retrieval_method":"公开仓库直接读取","observed_content":"项目采用阶段化图谱构建、模拟、报告和交互流程，目标是群体模拟而不是逐字小说证据阅读。","date":"2026-08-25","accessed_at":"2026-08-26","applicability":"说明架构参考和目标边界。","limitations":"不覆盖未公开实现。","direct":true,"independence_group":"mirofish-project"},
+    {"id":"S-NARRATIVE","origin":"external","title":"Narrative Maps 研究","location":"https://arxiv.org/abs/2009.04508","source_type":"primary-research","retrieval_method":"公开论文摘要直接读取","observed_content":"研究以事件为叙事地图地标和路线，并考虑连贯性、结构与覆盖。","date":"2026-08-25","accessed_at":"2026-08-26","applicability":"支持事件序列作为地图入口。","limitations":"不提供本产品的证据结构。","direct":true,"independence_group":"paper-authors"},
+    {"id":"S-USER","origin":"internal","title":"产品所有者发布授权","location":"current conversation 2026-08-26","source_type":"interview-record","retrieval_method":"当前对话直接记录","observed_content":"产品所有者要求全量实现双视图和黑白界面，并明确要求 GitHub 发布、Cloudflare 域名、VPS 与 Authentik。","date":"2026-08-26","accessed_at":"2026-08-26","applicability":"外部变更授权和验收目标。","limitations":"未指定子域名和公开仓库描述。","direct":true,"independence_group":"product-owner"}
+  ],
+  "claims": [
+    {"id":"C1","statement":"只要 2D、3D、编年和故事卡片都读取同一个 StoryMapStep 索引，视图切换就不需要重新分析或维护第二份剧情序列。","kind":"inference","impact":"high","confidence":"high","support_source_ids":["S-CODE","S-E2E","S-3DFG"],"contradict_source_ids":[],"falsifier":"浏览器测试显示切换视图后事件 ID、步数或标题发生变化。"},
+    {"id":"C2","statement":"方向证据稀疏时按首次到达顺序绘制明确标注的编年示意图，比随机力导向坐标更少制造虚假地理含义。","kind":"inference","impact":"high","confidence":"high","support_source_ids":["S-CODE","S-E2E"],"contradict_source_ids":[],"falsifier":"用户把示意顺序稳定误认为方位，或真实方向证据无法覆盖该布局。"},
+    {"id":"C3","statement":"统一间距、40 像素主要控件和明显焦点环能让黑白主题同时保留操作层级和键盘可见性。","kind":"inference","impact":"medium","confidence":"high","support_source_ids":["S-E2E","S-W3C","S-CARBON","S-GOVUK"],"contradict_source_ids":[],"falsifier":"窄屏或键盘测试出现低于目标尺寸、焦点不可见或内容遮挡。"},
+    {"id":"C4","statement":"复用现有服务端认证网关比在应用内新建身份系统更符合当前 ExampleOrg 部署边界。","kind":"inference","impact":"high","confidence":"high","support_source_ids":["S-VPS","S-CF"],"contradict_source_ids":[],"falsifier":"部署后未登录请求能绕过网关直接读取应用，或登录回调无法返回原请求。"}
+  ],
+  "assumptions": [
+    {"id":"A1","statement":"novel.aialra.online 是本项目可接受的正式子域名。","critical":true,"status":"supported","decision_impact":"决定 DNS、证书和认证网关键名。","falsifier":"该主机已被占用或产品所有者要求其他名称。","support_source_ids":["S-VPS"],"contradict_source_ids":[]},
+    {"id":"A2","statement":"公开演示使用空库或合成数据，不复制本地用户书库。","critical":true,"status":"supported","decision_impact":"决定容器数据卷和公开隐私边界。","falsifier":"产品所有者明确授权发布某一部具体作品和数据库。","support_source_ids":["S-REPO"],"contradict_source_ids":[]},
+    {"id":"A3","statement":"现有 ExampleOrg 全局访问组或项目访问组能授予产品所有者访问新应用。","critical":true,"status":"untested","decision_impact":"决定上线后能否完成登录验收。","falsifier":"认证网关矩阵或实际登录显示没有任何获准用户。","support_source_ids":["S-VPS"],"contradict_source_ids":[]}
+  ],
+  "search_branches": [
+    {"name":"adjacent","status":"executed","reason":"检查相邻的图可视化和投影方案。","round_ids":["R-ADJACENT"]},
+    {"name":"code","status":"executed","reason":"直接审计本地实现和测试。","round_ids":["R-CODE"]},
+    {"name":"failure","status":"executed","reason":"需要为漂移、不可操作和认证绕过建立门禁。","round_ids":["R-FAILURE"]},
+    {"name":"mechanism","status":"executed","reason":"需要核对三维图和代理 DNS 的直接能力。","round_ids":["R-MECHANISM"]},
+    {"name":"patent","status":"not_applicable","reason":"不提出专利性、自由实施或独创性结论。","round_ids":[]},
+    {"name":"problem","status":"executed","reason":"需要把用户反馈变成可证伪的状态与可用性问题。","round_ids":["R-PROBLEM"]},
+    {"name":"product","status":"executed","reason":"复核 MiroFish 与本产品目标差异。","round_ids":["R-PRODUCT"]},
+    {"name":"research","status":"executed","reason":"复核叙事地图以事件路线为核心的研究边界。","round_ids":["R-RESEARCH"]}
+  ],
+  "search_rounds": [
+    {"id":"R-CODE","branch":"code","query":"StoryMapStep mapStep 2D 3D animation deployment auth","channel":"公开代码与本地源代码","date":"2026-08-26","discovery_mode":"官方仓库检索并直接执行本地测试","search_log_source_id":"SL-CODE","new_candidate_ids":["K-SHARED-STEP","K-EXISTING-AUTH"],"evidence_source_ids":["S-3DFG","S-CODE","S-E2E","S-VPS"],"new_high_similarity_count":0,"new_decision_evidence_count":3},
+    {"id":"R-PROBLEM","branch":"problem","query":"official focus appearance target size spacing system graph dual view state","channel":"公开网络检索","date":"2026-08-26","discovery_mode":"标准和官方设计系统检索","search_log_source_id":"SL-PROBLEM","new_candidate_ids":["K-BW-ACCESSIBLE"],"evidence_source_ids":["S-W3C","S-CARBON","S-GOVUK"],"new_high_similarity_count":0,"new_decision_evidence_count":3},
+    {"id":"R-MECHANISM","branch":"mechanism","query":"official 3d-force-graph dynamic graphData camera click Cloudflare proxied DNS","channel":"公开网络检索","date":"2026-08-26","discovery_mode":"官方文档定向检索","search_log_source_id":"SL-MECHANISM","new_candidate_ids":["K-3D-PROJECTION","K-PROXIED-ORIGIN"],"evidence_source_ids":["S-3DFG","S-CF"],"new_high_similarity_count":0,"new_decision_evidence_count":2},
+    {"id":"R-FAILURE","branch":"failure","query":"focus invisible target too small graph label overlap state race authentication bypass","channel":"公开文档与本地回归","date":"2026-08-26","discovery_mode":"失败模式检查","search_log_source_id":"SL-FAILURE","new_candidate_ids":[],"evidence_source_ids":["S-E2E","S-W3C","S-GOVUK","S-VPS"],"new_high_similarity_count":0,"new_decision_evidence_count":2},
+    {"id":"R-ADJACENT","branch":"adjacent","query":"graph visualization shared state 2D 3D projection interaction","channel":"公开项目检索","date":"2026-08-26","discovery_mode":"相邻方案检索","search_log_source_id":"SL-ADJACENT","new_candidate_ids":["K-3D-PROJECTION"],"evidence_source_ids":["S-3DFG","S-W3C"],"new_high_similarity_count":0,"new_decision_evidence_count":0},
+    {"id":"R-PRODUCT","branch":"product","query":"MiroFish graph building architecture interaction","channel":"公开仓库检索","date":"2026-08-25","discovery_mode":"产品方案检索","search_log_source_id":"SL-PRODUCT","new_candidate_ids":["K-MIROFISH"],"evidence_source_ids":["S-MIROFISH"],"new_high_similarity_count":0,"new_decision_evidence_count":0},
+    {"id":"R-RESEARCH","branch":"research","query":"narrative maps events routes coherence coverage","channel":"公开论文检索","date":"2026-08-25","discovery_mode":"研究检索","search_log_source_id":"SL-RESEARCH","new_candidate_ids":["K-NARRATIVE"],"evidence_source_ids":["S-NARRATIVE"],"new_high_similarity_count":0,"new_decision_evidence_count":0}
+  ],
+  "candidates": [
+    {"id":"K-SHARED-STEP","name":"单一 StoryMapStep 加双投影器","class":"partial","verified":true,"source_ids":["S-CODE","S-E2E"]},
+    {"id":"K-3D-PROJECTION","name":"固定语义坐标的 3d-force-graph 投影","class":"adjacent","verified":true,"source_ids":["S-3DFG","S-E2E"]},
+    {"id":"K-BW-ACCESSIBLE","name":"黑白高对比加统一间距和可见焦点","class":"adjacent","verified":true,"source_ids":["S-W3C","S-CARBON","S-GOVUK","S-E2E"]},
+    {"id":"K-EXISTING-AUTH","name":"现有 ExampleOrg Authentik 统一网关","class":"partial","verified":true,"source_ids":["S-VPS"]},
+    {"id":"K-PROXIED-ORIGIN","name":"Cloudflare 代理 DNS 到 Nginx 源站","class":"adjacent","verified":true,"source_ids":["S-CF","S-VPS"]},
+    {"id":"K-MIROFISH","name":"MiroFish 阶段化图谱流程","class":"partial","verified":true,"source_ids":["S-MIROFISH"]},
+    {"id":"K-NARRATIVE","name":"Narrative Maps 事件路线方法","class":"analogy","verified":true,"source_ids":["S-NARRATIVE"]}
+  ],
+  "novelty": {
+    "applicable": true,
+    "applicability_reason": "深度审计需要确认本方案是成熟组件的组合，而不是误称为全新发明。",
+    "assessment": "differentiated-combination",
+    "stop_reason": "saturated",
+    "saturation_round_ids": ["R-ADJACENT","R-PRODUCT","R-RESEARCH"],
+    "languages": ["中文", "英文"],
+    "regions": ["公开网络资料", "产品所有者授权基础设施"],
+    "access_gaps": [{"resource":"任意真实小说的普遍抽取准确率","impact":"本轮只能证明固定自动测试和合成端到端样本，不宣称所有小说达到相同结果。","critical":false}],
+    "scope_statement": "已检查公开图组件、成熟设计系统、MiroFish 和叙事地图研究；结论是面向逐字证据阅读的组合实现，不提出专利或市场唯一性结论。"
+  },
+  "perspectives": [
+    {"id":"P1","lens":"产品与阅读连续性","producer":"当前主代理按产品验收条件复核","producer_type":"lead-agent","producer_reference":"S-E2E","independent":false,"findings":["双视图必须显示同一步骤而不是各自筛选。","地图无方向证据时必须明确是编年示意。"],"limitations":"没有独立产品用户研究。","source_ids":["S-CODE","S-E2E"],"context_isolated":false},
+    {"id":"P2","lens":"交互与无障碍","producer":"标准文档检索工具","producer_type":"tool","producer_reference":"S-W3C","independent":false,"findings":["黑白主题仍需可见焦点和足够点击尺寸。","间距必须形成稳定层级而非平均铺开。"],"limitations":"自动测试不替代真实用户研究。","source_ids":["S-W3C","S-CARBON","S-GOVUK"],"context_isolated":true},
+    {"id":"P3","lens":"安全、运维与回滚","producer":"当前主代理按 VPS 和发布门禁复核","producer_type":"lead-agent","producer_reference":"S-VPS","independent":false,"findings":["公开实例应使用空数据卷。","认证必须在反向代理层强制执行。","公开推送只能来自扫描过的一次性副本。"],"limitations":"外部写入前必须再次执行安全门禁。","source_ids":["S-REPO","S-VPS","S-CF"],"context_isolated":false}
+  ],
+  "real_world_validations": [
+    {"id":"V1","role":"产品所有者","participant_reference":"当前对话","method":"明确授权全量实现、GitHub 公开发布、域名和 Authentik 接入","conducted_at":"2026-08-26","outcome":"外部变更范围和目标已获授权。","limitations":"未指定仓库名称和子域名，因此采用现有项目名与最清晰的 novel 子域名。","status":"completed","evidence_source_ids":["S-USER"]},
+    {"id":"V2","role":"浏览器端到端","participant_reference":"120 章合成长篇演示","method":"桌面和窄屏真实 Chromium 流程","conducted_at":"2026-08-26","outcome":"双视图同步、快速步进、末步状态、控件尺寸和焦点均通过。","limitations":"公开域名和登录需部署后再次验证。","status":"completed","evidence_source_ids":["S-E2E"]}
+  ],
+  "alignment_questions": [
+    {"id":"AQ1","question":"公开实例是否复制本地书库？","decision_changing":true,"status":"defaulted","default_value":"不复制；只部署空库和应用自带合成演示。"},
+    {"id":"AQ2","question":"三维高度是否允许从剧情顺序推断为真实海拔？","decision_changing":true,"status":"answered"},
+    {"id":"AQ3","question":"新应用是否复用现有 ExampleOrg Authentik 网关？","decision_changing":true,"status":"answered"}
+  ],
+  "recommendation": {
+    "verdict": "proceed",
+    "action": "先完成本地测试、README 和安全扫描，再按可回滚顺序创建 VPS 容器、认证配置、Nginx、证书和 Cloudflare DNS，公开验证后从一次性审查副本发布 GitHub。",
+    "rationale": "共享步骤合同已有代码和浏览器证据；可用性规则有标准依据；现有认证网关可复用；公开数据边界已限定为空库。",
+    "strongest_counterevidence": "本地没有运行 Docker Desktop，容器只能在 VPS 验证；公开登录仍需部署后用未登录请求和认证矩阵确认。",
+    "minimum_test": "97 项 Python 测试、JavaScript 语法、2 条浏览器 E2E、VPS 容器 readyz、未登录 302 到登录入口、认证网关矩阵和安全发布扫描全部通过。",
+    "failure_response": "任一关键门禁失败时不创建或更新公开仓库；线上失败则恢复 Nginx、认证清单和 DNS 备份并停止容器。",
+    "reversal_condition": "双视图再次出现事件 ID 漂移、公开实例暴露书库、认证可绕过或发布扫描出现秘密时立即回滚并暂停发布。",
+    "support_source_ids":["S-CODE","S-E2E","S-REPO","S-VPS","S-W3C","S-3DFG","S-CF"],
+    "counter_source_ids":["S-E2E","S-VPS"]
+  },
+  "review_triggers": ["2D、3D、编年或故事卡片的当前事件不一致。", "快速点击后人物从过期起点重新出发。", "没有方向证据的坐标被描述成真实方位。", "公开仓库出现小说原文、数据库、密钥或身份资料。", "未登录请求能直接读取应用。", "容器健康失败或下一步永久加载。"]
+}
