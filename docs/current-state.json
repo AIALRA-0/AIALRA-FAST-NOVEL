@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "小说证据图谱",
   "release": "2.9.5-rc.1",
-  "status": "release_candidate_validated_pending_publication",
-  "source_commit": "local-working-tree;public-still-2.9.4-rc.1",
-  "active_objective": "发布 2.9.5 普通界面去除内部评测任务候选版",
+  "status": "release_candidate_published_and_deployed",
+  "source_commit": "bc86fd363fb78a0c179f5bd5517a39e95b64bc15",
+  "active_objective": "2.9.5 普通界面去除内部评测任务候选版已发布并完成公网验收",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -16,7 +16,7 @@
   "quality_gate": {
     "unit_tests": "passed:149;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
-    "github_actions": "passed:quality-gate-run-33281784430;python-browser-container",
+    "github_actions": "passed:quality-gate-run-33285016531;python-browser-container",
     "browser_flows": "passed:11;skipped:3-local-extended-fixtures;internal-evaluation-absent-from-reader-ui",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
@@ -40,13 +40,13 @@
     "reader_quality_gate": "evidence-structure-conflicts-and-actionable-book-issues-only"
   },
   "publication": {
-    "github": "pending-2.9.5-publication;current-public-2.9.4-rc.1",
-    "github_commit": "pending-clean-gated-commit",
-    "github_release": "pending-v2.9.5-rc.1-prerelease",
-    "deployment": "pending-2.9.5-switch;current-readyz-2.9.4-rc.1;database-volume-preserved",
+    "github": "published:release/2.9.5-rc.1-clean;default-branch-updated",
+    "github_commit": "f5d487774ee1f54f77f778605c8bc0bab716754c",
+    "github_release": "v2.9.5-rc.1-prerelease",
+    "deployment": "readyz-2.9.5-rc.1;image-sha256-180dd2bd41b1;database-volume-preserved",
     "hostname": "Authentik-protected deployment",
-    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-2.9.5-roundtrip-pending",
-    "rollback": "2.9.4-release-directory-and-image-to-be-retained;new-data-backup-required-before-switch"
+    "authentication": "anonymous-root-and-api-redirect-to-Authentik;authenticated-2.9.5-reader-ui-verified",
+    "rollback": "2.9.4-release-directory-and-image-retained;backup-20260830T011535Z-pre-2.9.5-rc.1"
   },
   "last_updated": "2026-08-29"
 }
