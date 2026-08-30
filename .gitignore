@@ -1,0 +1,24 @@
+# 本地运行数据、密钥和缓存不得进入版本记录。
+.env
+.venv/
+.packaging-venv/
+.build-venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+data/*.db
+data/*.db-*
+data/*.log
+data/*credentials*.json
+data/backups/
+data/uploads/
+data/samples/
+node_modules/
+dist/
+dist-*/
+build/
+build-*/
+output/
+*.egg-info/
+.playwright-cli/
+test-results/

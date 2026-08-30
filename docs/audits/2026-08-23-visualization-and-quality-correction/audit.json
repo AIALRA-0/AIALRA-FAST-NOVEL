@@ -1,0 +1,90 @@
+{
+  "meta": {"contract_version": "1.0", "title": "NovelAtlas 可视化与内容质量纠偏", "mode": "standard", "as_of": "2026-08-24", "status": "complete", "scope": "人物关系、逻辑地图、证据详情、世界信息去重、真实长篇处理和成本可见性", "exclusions": ["不声称取代人工文学研究", "不评估模型厂商未公开数据"]},
+  "decision_problem": {
+    "project_classification": "可逆的本地阅读辅助工具", "risk_level": "medium", "decision_owner": "用户",
+    "desired_outcome": "在超长篇小说中可靠查看人物、地点、时间、设定、条目和逐字证据",
+    "current_state": "1.1 版存在图谱拥挤、地图缺方位、详情遮挡、样例机械和世界信息重复",
+    "decision": "是否沿用证据优先的分段知识图谱架构并发布 1.2 纠偏版",
+    "success_metrics": ["真实小说第一片段是真实章节", "保留事实能回到逐字证据", "120 步地图默认仅显示当前前五步和后三步路线", "宽屏详情为无模糊遮罩的左中右三栏", "自动化测试通过且浏览器控制台无错误", "任务展示令牌、缓存和费用"],
+    "constraints": ["本地优先", "DeepSeek 为主要经济模型", "密钥不出现在日志和答复", "路线顺序不冒充真实方位"],
+    "irreversible_actions": ["模型接口已产生费用无法撤销"],
+    "research_budget": {"overall_limit": "完成六个核心检索分支、真实小说测试和本地自动化测试后停止扩展", "parallel_capacity": 1, "paid_or_private_access": ["用户授权的 DeepSeek 接口"], "cutoff_policy": "直接证据足以支持可逆发布时停止；开放世界只给有限范围结论"},
+    "reversal_evidence": ["真实长篇证据覆盖下降", "核心图谱仍无法辨读", "失败率或费用超过阈值"]
+  },
+  "questions": [
+    {"id": "Q1", "question": "当前长篇处理方式能否降低遗漏、幻觉和跨章记忆错误？", "critical": true, "internal_probe": "检查提示词、证据校验、分段结果和《西游记》任务", "external_probe": "核对长上下文与分层检索研究", "internal_status": "answered", "external_status": "answered", "internal_source_ids": ["S1", "S3"], "external_source_ids": ["S4", "S9"], "internal_gap": "", "external_gap": ""},
+    {"id": "Q2", "question": "新版交互是否解决截图中的拥挤、线团和遮挡？", "critical": true, "internal_probe": "宽屏操作悬停、拖动、缩放、轨迹和三栏详情", "external_probe": "核对官方图组件并比较 MiroFish", "internal_status": "answered", "external_status": "answered", "internal_source_ids": ["S2"], "external_source_ids": ["S5", "S6", "S7"], "internal_gap": "", "external_gap": ""}
+  ],
+  "source_map": [
+    {"id": "M1", "question_ids": ["Q1"], "origin": "internal", "channel": "local code and database", "target": "prompt, quote validator, consolidation and 西游记 job", "decision_use": "验证实现和真实输出", "priority": "high", "access_status": "searched"},
+    {"id": "M2", "question_ids": ["Q1"], "origin": "external", "channel": "primary research", "target": "Lost in the Middle and RAPTOR", "decision_use": "挑战一次性超长上下文", "priority": "high", "access_status": "searched"},
+    {"id": "M3", "question_ids": ["Q2"], "origin": "internal", "channel": "headed browser", "target": "relationship, map and inspector screenshots", "decision_use": "验证可见交互", "priority": "high", "access_status": "searched"},
+    {"id": "M4", "question_ids": ["Q2"], "origin": "external", "channel": "official docs and repositories", "target": "D3, 3d-force-graph and MiroFish", "decision_use": "确认机制和相近方案", "priority": "high", "access_status": "searched"}
+  ],
+  "sources": [
+    {"id": "S1", "origin": "internal", "title": "1.2 自动化测试与真实小说任务", "location": "tests/ and data/ui-v12.db", "source_type": "test-observation", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "验证导入、证据校验、去重、费用和数据结构", "limitations": "不能覆盖全部小说文体", "retrieval_method": "运行测试、接口任务并读库", "observed_content": "39 项测试通过；《西游记》744645 字、203 个片段全部完成；保留 2980 条有证据的结构记录，证据覆盖 100%，错链为 0，累计费用约 1.394933 美元", "direct": true, "independence_group": "runtime"},
+    {"id": "S2", "origin": "internal", "title": "1.2 浏览器交互截图", "location": "output/playwright/v12", "source_type": "test-observation", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "观察图谱、地图、局部轨迹和三栏", "limitations": "主要覆盖 Chromium 宽屏", "retrieval_method": "Playwright 有头操作和截图", "observed_content": "二维与三维切换、节点释放式拖动、缩放、旋转和悬停正常；可见标签重叠为 0；人物地图标记按步骤移动；详情不模糊中央；最终会话控制台零错误", "direct": true, "independence_group": "runtime"},
+    {"id": "S3", "origin": "internal", "title": "证据优先提示词与持久化", "location": "app/prompts.py and app/pipeline.py", "source_type": "source-code", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "说明证据、别名、方位、时间和自然语言约束", "limitations": "不能保证模型找出所有事实", "retrieval_method": "直接读取源码", "observed_content": "候选必须带当前片段逐字引文；定位失败即拒绝；可疑合并不自动接受", "direct": true, "independence_group": "source"},
+    {"id": "S4", "origin": "external", "title": "Lost in the Middle", "location": "https://arxiv.org/abs/2307.03172", "source_type": "primary-research", "date": "2023-07-06", "accessed_at": "2026-08-24", "applicability": "说明一次输入长上下文仍会漏中段信息", "limitations": "任务不完全等于中文小说抽取", "retrieval_method": "打开论文摘要", "observed_content": "信息位置改变显著影响表现，中段使用尤其不稳健", "direct": true, "independence_group": "stanford"},
+    {"id": "S5", "origin": "external", "title": "D3 collide force", "location": "https://d3js.org/d3-force/collide", "source_type": "official-doc", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "指导节点防重叠", "limitations": "不能自动解决文字标签碰撞", "retrieval_method": "打开官方文档", "observed_content": "碰撞力用半径、强度和迭代约束节点距离", "direct": true, "independence_group": "d3"},
+    {"id": "S6", "origin": "external", "title": "3d-force-graph", "location": "https://github.com/vasturiano/3d-force-graph", "source_type": "source-code", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "确认视角、拖动、悬停和适窗能力", "limitations": "标签策略仍由应用实现", "retrieval_method": "核对官方仓库 README 和 API", "observed_content": "组件提供拖动、悬停、碰撞和 zoomToFit", "direct": true, "independence_group": "vasturiano"},
+    {"id": "S7", "origin": "external", "title": "MiroFish", "location": "https://github.com/666ghj/MiroFish", "source_type": "source-code", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "用户指定的关系图和长文图构建参照", "limitations": "目标是群体模拟而非小说阅读编年", "retrieval_method": "核对官方仓库", "observed_content": "从文档抽取实体关系并建立 GraphRAG，再用于模拟和报告", "direct": true, "independence_group": "mirofish"},
+    {"id": "S8", "origin": "external", "title": "Project Gutenberg 西遊記", "location": "https://www.gutenberg.org/ebooks/23962", "source_type": "product-page", "date": "2007-12-22", "accessed_at": "2026-08-24", "applicability": "真实非预结构化中文公版小说", "limitations": "一部古典繁体小说不代表所有来源", "retrieval_method": "官方书目取得纯文本", "observed_content": "提供吴承恩《西遊記》中文纯文本和 EPUB", "direct": true, "independence_group": "gutenberg"},
+    {"id": "S9", "origin": "external", "title": "RAPTOR", "location": "https://arxiv.org/abs/2401.18059", "source_type": "primary-research", "date": "2024-01-31", "accessed_at": "2026-08-24", "applicability": "支持局部片段和全局多层摘要", "limitations": "当前应用并非完整 RAPTOR", "retrieval_method": "打开论文摘要", "observed_content": "把片段递归聚类和摘要成树，在多层级检索", "direct": true, "independence_group": "raptor"},
+    {"id": "S10", "origin": "external", "title": "MiroFish fabricated tool result issue", "location": "https://github.com/666ghj/MiroFish/issues/529", "source_type": "other", "date": "2026-04-12", "accessed_at": "2026-08-24", "applicability": "展示无来源约束的多层生成风险", "limitations": "公开问题报告并非独立复现", "retrieval_method": "打开官方仓库问题", "observed_content": "伪造工具结果曾让不存在实体、引文和统计进入报告", "direct": true, "independence_group": "mirofish-issue"},
+    {"id": "SL-problem", "origin": "external", "title": "问题分支查询", "location": "tool:web/long-context-middle", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "长篇记忆问题", "limitations": "单轮关键词", "retrieval_method": "网页检索", "observed_content": "找到 Lost in the Middle", "direct": true, "independence_group": "q-problem"},
+    {"id": "SL-mechanism", "origin": "external", "title": "机制分支查询", "location": "tool:web/d3-force-interaction", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "图布局和交互", "limitations": "未比较全部图库", "retrieval_method": "官方域名检索", "observed_content": "找到 D3 和 3d-force-graph", "direct": true, "independence_group": "q-mechanism"},
+    {"id": "SL-product", "origin": "external", "title": "产品分支查询", "location": "tool:web/MiroFish", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "指定相近产品", "limitations": "产品快速更新", "retrieval_method": "官方仓库检索", "observed_content": "确认目标差异", "direct": true, "independence_group": "q-product"},
+    {"id": "SL-research", "origin": "external", "title": "研究分支查询", "location": "tool:web/RAPTOR", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "分层长文研究", "limitations": "未复现基准", "retrieval_method": "论文检索", "observed_content": "找到 RAPTOR", "direct": true, "independence_group": "q-research"},
+    {"id": "SL-adjacent", "origin": "external", "title": "邻近分支查询", "location": "tool:web/Gutenberg-Xiyouji", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "真实语料", "limitations": "只实测一部", "retrieval_method": "官方书库检索", "observed_content": "找到真实中文长篇", "direct": true, "independence_group": "q-adjacent"},
+    {"id": "SL-failure", "origin": "external", "title": "失败分支查询", "location": "tool:web/MiroFish-hallucination", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "幻觉失败案例", "limitations": "问题可能已修复", "retrieval_method": "问题库检索", "observed_content": "找到虚构工具结果案例", "direct": true, "independence_group": "q-failure"},
+    {"id": "SL-code", "origin": "external", "title": "代码分支查询", "location": "tool:web/3d-force-graph-source", "source_type": "search-log", "date": "2026-08-24", "accessed_at": "2026-08-24", "applicability": "可复用图组件", "limitations": "未审计全部依赖", "retrieval_method": "GitHub 检索", "observed_content": "找到采用组件源码", "direct": true, "independence_group": "q-code"}
+  ],
+  "claims": [
+    {"id": "C1", "statement": "一次性把整本超长小说放入模型不是可靠的完整记忆方案", "kind": "inference", "impact": "high", "confidence": "high", "support_source_ids": ["S4", "S9"], "contradict_source_ids": [], "falsifier": "同类中文长篇基准证明一次性方案稳定超过分段证据方案且中段召回不降"},
+    {"id": "C2", "statement": "逐字引文入库门能阻止引文不匹配候选成为事实", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S1", "S3"], "contradict_source_ids": [], "falsifier": "数据库出现找不到原文字符区间的模型事实"},
+    {"id": "C3", "statement": "三栏和局部轨迹消除了中央模糊遮挡与全路线线团", "kind": "fact", "impact": "high", "confidence": "high", "support_source_ids": ["S2"], "contradict_source_ids": [], "falsifier": "宽屏复测仍遮住中央或默认显示远路线"},
+    {"id": "C4", "statement": "MiroFish 是重要参照但不能直接代替小说证据编年", "kind": "inference", "impact": "medium", "confidence": "high", "support_source_ids": ["S7"], "contradict_source_ids": [], "falsifier": "其官方版提供同等防剧透、逐章证据、故事时间和地点轨迹联动"}
+  ],
+  "assumptions": [
+    {"id": "A1", "statement": "用户更重视可追溯和不漏主线，而非结构化每个修辞细节", "critical": true, "status": "supported", "decision_impact": "若要求逐句批注，事实图粒度需重构", "falsifier": "用户明确要求逐句完整标注并接受成本", "support_source_ids": ["S1", "S2"], "contradict_source_ids": []},
+    {"id": "A2", "statement": "可疑别名人工确认比模糊自动合并安全", "critical": true, "status": "supported", "decision_impact": "若自动合并准确率足够高可减少队列", "falsifier": "跨文体基准证明误合并率低于阈值", "support_source_ids": ["S1", "S3"], "contradict_source_ids": []}
+  ],
+  "search_branches": [
+    {"name": "adjacent", "status": "executed", "reason": "真实语料和邻近材料", "round_ids": ["R-adjacent"]},
+    {"name": "code", "status": "executed", "reason": "可复用图组件", "round_ids": ["R-code"]},
+    {"name": "failure", "status": "executed", "reason": "幻觉和交互失败", "round_ids": ["R-failure"]},
+    {"name": "mechanism", "status": "executed", "reason": "碰撞、拖动、悬停和视角", "round_ids": ["R-mechanism"]},
+    {"name": "patent", "status": "not_applicable", "reason": "不提出专利性或独占新颖性主张", "round_ids": []},
+    {"name": "problem", "status": "executed", "reason": "长上下文遗漏", "round_ids": ["R-problem"]},
+    {"name": "product", "status": "executed", "reason": "MiroFish 边界", "round_ids": ["R-product"]},
+    {"name": "research", "status": "executed", "reason": "分层处理研究", "round_ids": ["R-research"]}
+  ],
+  "search_rounds": [
+    {"id": "R-problem", "branch": "problem", "query": "Lost in the Middle long context", "channel": "arXiv", "date": "2026-08-24", "discovery_mode": "keyword", "new_candidate_ids": ["K3"], "evidence_source_ids": ["S4"], "search_log_source_id": "SL-problem", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-mechanism", "branch": "mechanism", "query": "D3 collide 3d force drag hover zoom", "channel": "official docs", "date": "2026-08-24", "discovery_mode": "mechanism", "new_candidate_ids": ["K2"], "evidence_source_ids": ["S5", "S6"], "search_log_source_id": "SL-mechanism", "new_high_similarity_count": 0, "new_decision_evidence_count": 2},
+    {"id": "R-product", "branch": "product", "query": "MiroFish knowledge graph workflow", "channel": "GitHub", "date": "2026-08-24", "discovery_mode": "named-product", "new_candidate_ids": ["K1"], "evidence_source_ids": ["S7"], "search_log_source_id": "SL-product", "new_high_similarity_count": 1, "new_decision_evidence_count": 1},
+    {"id": "R-research", "branch": "research", "query": "RAPTOR hierarchical retrieval", "channel": "arXiv", "date": "2026-08-24", "discovery_mode": "citation-chain", "new_candidate_ids": ["K3"], "evidence_source_ids": ["S9"], "search_log_source_id": "SL-research", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-adjacent", "branch": "adjacent", "query": "Project Gutenberg 西遊記 text", "channel": "official library", "date": "2026-08-24", "discovery_mode": "corpus", "new_candidate_ids": ["K4"], "evidence_source_ids": ["S8"], "search_log_source_id": "SL-adjacent", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-failure", "branch": "failure", "query": "MiroFish fabricated tool result", "channel": "GitHub issues", "date": "2026-08-24", "discovery_mode": "failure-case", "new_candidate_ids": [], "evidence_source_ids": ["S10"], "search_log_source_id": "SL-failure", "new_high_similarity_count": 0, "new_decision_evidence_count": 1},
+    {"id": "R-code", "branch": "code", "query": "3d-force-graph source", "channel": "GitHub", "date": "2026-08-24", "discovery_mode": "source-code", "new_candidate_ids": ["K2"], "evidence_source_ids": ["S6"], "search_log_source_id": "SL-code", "new_high_similarity_count": 0, "new_decision_evidence_count": 1}
+  ],
+  "candidates": [
+    {"id": "K1", "name": "MiroFish", "class": "near", "verified": true, "source_ids": ["S7", "S10"]},
+    {"id": "K2", "name": "3d-force-graph and D3 collide", "class": "partial", "verified": true, "source_ids": ["S5", "S6"]},
+    {"id": "K3", "name": "RAPTOR and long-context research", "class": "adjacent", "verified": true, "source_ids": ["S4", "S9"]},
+    {"id": "K4", "name": "Project Gutenberg 西遊記", "class": "adjacent", "verified": true, "source_ids": ["S8"]}
+  ],
+  "novelty": {"applicable": true, "applicability_reason": "用户要求参考成熟项目并查重", "assessment": "near-match-found", "stop_reason": "decisive-match", "saturation_round_ids": [], "languages": ["zh", "en"], "regions": ["global public web"], "access_gaps": [{"resource": "闭源竞品内部实现", "impact": "不能完整比较私有算法和内部评测结果", "critical": false}], "scope_statement": "公开产品、源码、论文、语料和失败案例中找到相近组件；不声称开放世界唯一"},
+  "perspectives": [
+    {"id": "P1", "lens": "证据与假设", "producer": "lead", "producer_type": "lead-agent", "producer_reference": "sequential-audit", "independent": false, "context_isolated": false, "source_ids": ["S1", "S3", "S4", "S9"], "findings": ["分段证据门能拒绝引文不匹配", "研究反对一次吞整本书", "别名仍需人工确认"], "limitations": "受单代理限制，未形成独立产物"},
+    {"id": "P2", "lens": "现有方案与失败", "producer": "lead", "producer_type": "lead-agent", "producer_reference": "sequential-audit", "independent": false, "context_isolated": false, "source_ids": ["S6", "S7", "S10"], "findings": ["MiroFish 相近但目标不同", "图组件支持所需交互", "无证据生成会放大虚构"], "limitations": "未审计所有闭源竞品"},
+    {"id": "P3", "lens": "阅读者与操作者", "producer": "lead", "producer_type": "lead-agent", "producer_reference": "sequential-audit", "independent": false, "context_isolated": false, "source_ids": ["S1", "S2", "S8"], "findings": ["局部轨迹更易读", "三栏保留中央上下文", "费用和拒绝数量可见"], "limitations": "仍需用户亲测打包版"}
+  ],
+  "real_world_validations": [
+    {"id": "V1", "role": "本地操作者", "participant_reference": "headed Chromium session", "method": "导入《西游记》、完成 203 个片段与 14 批全书复核，并操作宽屏界面", "conducted_at": "2026-08-24", "outcome": "2980 条结构记录全部可回到本书原文章节；世界信息归并为 144 张可见卡片；三栏、关系图和移动地图最终会话无控制台错误", "limitations": "不是独立外部访谈，只实测一部真实长篇", "status": "completed", "evidence_source_ids": ["S1", "S2"]}
+  ],
+  "alignment_questions": [],
+  "recommendation": {"verdict": "proceed", "action": "发布 1.2 可逆测试版并继续监测其他题材的别名与故事时间判断", "rationale": "内部真实全文测试与外部研究共同支持证据优先分段架构，界面问题已有可见修复", "strongest_counterevidence": "真实长篇仍有 74 组可疑别名需要人工确认，一部古典小说不能代表全部文体", "minimum_test": "39 项测试、最终无错误浏览器会话、真实全文 203 个片段、14 批复核和打包启动", "failure_response": "越过阈值就暂停任务并加强上下文和合并审核", "reversal_condition": "全文证据覆盖低于 95%、失败率超过 5% 或用户仍无法追踪人物地点", "support_source_ids": ["S1", "S2", "S3", "S5", "S6", "S8"], "counter_source_ids": ["S4", "S10"]},
+  "review_triggers": ["全文证据覆盖低于 95%", "失败率超过 5%", "费用超过用户预算", "连续两轮重复实体不下降", "用户反馈仍有大面积遮挡"]
+}
