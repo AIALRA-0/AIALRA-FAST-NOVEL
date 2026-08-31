@@ -381,16 +381,17 @@ test("2.9 统一选择器、防剧透输入和质量任务页可直接操作", a
   await page.keyboard.press("Escape");
   await expect(page.locator(".select-popover")).toHaveCount(0);
 
+  const initialReadingCeiling = Number(await page.locator("#progress-slider").getAttribute("max"));
+  expect(initialReadingCeiling).toBeGreaterThan(2);
   await page.locator("#progress-count").focus();
   await page.keyboard.press("Enter");
   await expect(page.locator(".progress-inline-input")).toBeVisible();
   await page.locator(".progress-inline-input").fill("3");
   await page.keyboard.press("Enter");
   await expect(page.locator("#progress-count")).toHaveText(/第 3 章 · 共 \d+ 章/);
-  const readingCeiling = Number(await page.locator("#progress-slider").getAttribute("max"));
-  expect(readingCeiling).toBeGreaterThan(2);
+  expect(await page.locator("#progress-slider").inputValue()).toBe("2");
   await page.locator("#progress-show-all").click();
-  await expect.poll(async () => page.locator("#progress-slider").inputValue()).toBe(String(readingCeiling));
+  await expect.poll(async () => page.locator("#progress-slider").inputValue()).toBe(String(initialReadingCeiling));
 
   await page.locator('.nav-item[data-view="quality"]').click();
   await expect(page.locator(".release-decision")).toBeVisible();
