@@ -809,6 +809,7 @@ def narrative_structure(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """Return the reversible story-unit and shared-world structure."""
 
@@ -819,6 +820,7 @@ def narrative_structure(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -881,6 +883,7 @@ def book_review_tasks(
     include_resolved: bool = Query(default=False),
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     with transaction(settings.database_path) as connection:
         ensure_book(connection, book_id)
@@ -889,6 +892,7 @@ def book_review_tasks(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -2434,6 +2438,7 @@ def overview(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """返回同一剧透边界内的全部派生视图。"""
 
@@ -2444,6 +2449,7 @@ def overview(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4023,6 +4029,7 @@ def search_book(
     limit: int = Query(default=60, ge=1, le=200),
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """同时搜索结构知识和原文片段。"""
 
@@ -4035,6 +4042,7 @@ def search_book(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4167,6 +4175,7 @@ def map_layout(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
     detail_level: str = Query(default="high", pattern="^(low|medium|high)$"),
     focus: str = Query(default="", max_length=120),
 ) -> dict[str, Any]:
@@ -4180,6 +4189,7 @@ def map_layout(
                     connection, book_id,
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4197,6 +4207,7 @@ def narrative_memory(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """返回最近场景、人物状态、未闭合线索、故事弧和因果边。"""
 
@@ -4208,6 +4219,7 @@ def narrative_memory(
                     connection, book_id,
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4227,6 +4239,7 @@ def concepts(
     limit: int = Query(default=200, ge=1, le=1_000),
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """按名称、别名、说明、分类和状态检索知识概念。"""
 
@@ -4238,6 +4251,7 @@ def concepts(
                     connection, book_id,
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4381,6 +4395,7 @@ def knowledge_claims(
     concept_id: int | None = Query(default=None, gt=0),
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """返回知识概念下的原子事实、限定条件和证据数量。"""
 
@@ -4392,6 +4407,7 @@ def knowledge_claims(
                     connection, book_id,
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4530,6 +4546,7 @@ def knowledge_facets(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """返回知识库分类、状态和证据覆盖统计。"""
 
@@ -4541,6 +4558,7 @@ def knowledge_facets(
                     connection, book_id,
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4560,6 +4578,7 @@ def knowledge_revisions(
     limit: int = Query(default=100, ge=1, le=500),
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """返回概念和原子事实的人工修改记录。"""
 
@@ -4572,6 +4591,7 @@ def knowledge_revisions(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4588,6 +4608,7 @@ def target_evidence(
     target_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """返回事实的逐字引文、章节和稳定锚点。"""
 
@@ -4609,6 +4630,7 @@ def target_evidence(
                     connection, int(book_row["book_id"]),
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4674,6 +4696,7 @@ def segment(
     segment_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """读取完整原文片段，供证据抽屉跳转。"""
 
@@ -4682,13 +4705,14 @@ def segment(
     if item is None:
         raise HTTPException(status_code=404, detail="找不到原文片段。")
     window: ReadingWindow | None = None
-    if through_segment is not None or from_segment is not None:
+    if through_segment is not None or from_segment is not None or spoiler_ceiling is not None:
         with connect(settings.database_path) as connection:
             try:
                 window = resolve_reading_window(
                     connection, int(item["book_id"]),
                     from_segment=from_segment,
                     through_segment=through_segment,
+                    spoiler_ceiling=spoiler_ceiling,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -4764,6 +4788,7 @@ def list_systems(
     book_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> list[dict[str, Any]]:
     """Return every evidence-bounded hierarchy, order, or network in one book."""
 
@@ -4774,6 +4799,7 @@ def list_systems(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -5041,6 +5067,7 @@ def story_context(
     event_id: int,
     from_segment: int | None = Query(default=None, ge=0),
     through_segment: int | None = Query(default=None, ge=0),
+    spoiler_ceiling: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     """Return a zero-call knowledge capsule constrained by the spoiler boundary."""
 
@@ -5051,6 +5078,7 @@ def story_context(
                 connection, book_id,
                 from_segment=from_segment,
                 through_segment=through_segment,
+                spoiler_ceiling=spoiler_ceiling,
             )
             payload = story_knowledge_context(
                 connection, book_id, event_id, window.through_segment, window.from_segment,

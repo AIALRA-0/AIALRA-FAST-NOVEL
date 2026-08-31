@@ -51,6 +51,7 @@ const state = {
   mapShowFullRoute: false,
   readingFrom: 0,
   readingThrough: null,
+  readingCeiling: null,
   loadingProgress: null,
   mapGraph: null,
   mapGraphResizeObserver: null,
@@ -159,15 +160,20 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const MAP_CAMERA_STORAGE_KEY = "novel-atlas-map-camera-state-v2";
 const MAP_CAMERA_SAFE_MARGIN = 0.28;
 const MAP_CAMERA_MAX_RECORDS = 48;
-const READING_WINDOW_STORAGE_KEY = "novel-atlas-reading-window-v1";
+const READING_WINDOW_STORAGE_KEY = "novel-atlas-reading-window-v2";
+const LEGACY_READING_WINDOW_STORAGE_KEY = "novel-atlas-reading-window-v1";
 
 function loadReadingWindowPreferences() {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(READING_WINDOW_STORAGE_KEY) || "null");
-    return parsed && parsed.version === 1 && parsed.entries && typeof parsed.entries === "object"
-      ? parsed : { version: 1, entries: {} };
+    if (parsed && parsed.version === 2 && parsed.entries && typeof parsed.entries === "object") return parsed;
+    const legacy = JSON.parse(window.localStorage.getItem(LEGACY_READING_WINDOW_STORAGE_KEY) || "null");
+    if (legacy && legacy.version === 1 && legacy.entries && typeof legacy.entries === "object") {
+      return { version: 2, entries: legacy.entries };
+    }
+    return { version: 2, entries: {} };
   } catch {
-    return { version: 1, entries: {} };
+    return { version: 2, entries: {} };
   }
 }
 
@@ -175,17 +181,19 @@ function readingWindowPreference(bookId = state.bookId) {
   const records = loadReadingWindowPreferences();
   const value = records.entries[String(bookId)] || {};
   return {
-    from: Number.isFinite(Number(value.from)) ? Math.max(0, Number(value.from)) : 0,
-    through: Number.isFinite(Number(value.through)) ? Math.max(0, Number(value.through)) : null,
+    from: value.from !== null && value.from !== undefined && Number.isFinite(Number(value.from)) ? Math.max(0, Number(value.from)) : 0,
+    through: value.through !== null && value.through !== undefined && Number.isFinite(Number(value.through)) ? Math.max(0, Number(value.through)) : null,
+    ceiling: value.ceiling !== null && value.ceiling !== undefined && Number.isFinite(Number(value.ceiling)) ? Math.max(0, Number(value.ceiling)) : null,
   };
 }
 
-function saveReadingWindowPreference(from, through, bookId = state.bookId) {
+function saveReadingWindowPreference(from, through, bookId = state.bookId, ceiling = state.readingCeiling) {
   if (!bookId) return;
   const records = loadReadingWindowPreferences();
   records.entries[String(bookId)] = {
     from: Math.max(0, Number(from) || 0),
     through: Number.isFinite(Number(through)) ? Math.max(0, Number(through)) : null,
+    ceiling: Number.isFinite(Number(ceiling)) ? Math.max(0, Number(ceiling)) : null,
     updatedAt: Date.now(),
   };
   const entries = Object.entries(records.entries)
@@ -195,11 +203,14 @@ function saveReadingWindowPreference(from, through, bookId = state.bookId) {
   try { window.localStorage.setItem(READING_WINDOW_STORAGE_KEY, JSON.stringify(records)); } catch { /* 存储失败时不阻断阅读； */ }
 }
 
-function readingQuery(from = state.readingFrom, through = state.readingThrough) {
+function readingQuery(from = state.readingFrom, through = state.readingThrough, ceiling = state.readingCeiling) {
   const params = new URLSearchParams();
   if (Number(from) > 0) params.set("from_segment", String(Math.max(0, Number(from))));
   if (through !== null && through !== undefined && Number.isFinite(Number(through))) {
     params.set("through_segment", String(Math.max(0, Number(through))));
+  }
+  if (ceiling !== null && ceiling !== undefined && Number.isFinite(Number(ceiling))) {
+    params.set("spoiler_ceiling", String(Math.max(0, Number(ceiling))));
   }
   const query = params.toString();
   return query ? `?${query}` : "";
@@ -721,6 +732,7 @@ function resetMapStateForBook() {
   state.mapLastConfirmedRegionId = null;
   state.readingFrom = 0;
   state.readingThrough = null;
+  state.readingCeiling = null;
   state.narrativeStructure = null;
   state.storyScope = null;
   state.storyScopeBookId = null;
@@ -941,11 +953,18 @@ async function loadOverview(throughSegment = null, silent = false, fromSegment =
   const requestedBookId = state.bookId;
   const requestSerial = ++state.overviewRequestSerial;
   const preference = readingWindowPreference(requestedBookId);
+  const bookSummary = state.books.find((book) => Number(book.id) === Number(requestedBookId));
+  const bookMaximum = Math.max(0, Number(bookSummary?.segment_count || 0) - 1);
+  const sameBook = state.overview && Number(state.overview.book?.id) === Number(requestedBookId);
+  const savedCeiling = sameBook ? state.readingCeiling : preference.ceiling;
+  const requestedCeiling = savedCeiling !== null && savedCeiling !== undefined && Number.isFinite(Number(savedCeiling))
+    ? Math.min(bookMaximum || Number.MAX_SAFE_INTEGER, Math.max(0, Number(savedCeiling)))
+    : (bookMaximum > 0 ? bookMaximum : null);
   const requestedFrom = fromSegment === null || fromSegment === undefined
-    ? (state.overview && Number(state.overview.book?.id) === Number(requestedBookId) ? state.readingFrom : preference.from)
+    ? (sameBook ? state.readingFrom : preference.from)
     : Number(fromSegment);
   const requestedThrough = throughSegment === null || throughSegment === undefined
-    ? (state.overview && Number(state.overview.book?.id) === Number(requestedBookId) ? state.readingThrough : preference.through)
+    ? (sameBook ? state.readingThrough : preference.through)
     : Number(throughSegment);
   if (Number(state.conceptsBookId) !== Number(requestedBookId)) {
     state.concepts = [];
@@ -954,7 +973,7 @@ async function loadOverview(throughSegment = null, silent = false, fromSegment =
     state.inspectorRequestSerial += 1;
     if (state.inspectorTarget?.type === "concept") closeInspector();
   }
-  const query = readingQuery(requestedFrom, requestedThrough);
+  const query = readingQuery(requestedFrom, requestedThrough, requestedCeiling);
   const querySuffix = query ? `&${query.slice(1)}` : "";
   const stages = [
     ["读取书籍概览", `/api/books/${requestedBookId}/overview${query}`],
@@ -995,7 +1014,11 @@ async function loadOverview(throughSegment = null, silent = false, fromSegment =
   state.narrativeStructure = narrativeStructure;
   state.readingFrom = Number(overview.reading_window?.from_segment ?? overview.from_segment ?? requestedFrom ?? 0);
   state.readingThrough = Number(overview.reading_window?.through_segment ?? overview.through_segment ?? requestedThrough ?? 0);
-  saveReadingWindowPreference(state.readingFrom, state.readingThrough, requestedBookId);
+  const responseCeiling = Number(overview.reading_window?.spoiler_ceiling ?? overview.spoiler_ceiling);
+  state.readingCeiling = Number.isFinite(responseCeiling)
+    ? Math.max(state.readingThrough, Math.min(bookMaximum || responseCeiling, responseCeiling))
+    : (requestedCeiling ?? Math.max(state.readingThrough, bookMaximum));
+  saveReadingWindowPreference(state.readingFrom, state.readingThrough, requestedBookId, state.readingCeiling);
   if (Number(state.storyScopeBookId) !== Number(requestedBookId)) {
     const currentUnit = (narrativeStructure.units || []).find((unit) =>
       Number(unit.start_segment) <= Number(overview.through_segment)
@@ -1018,10 +1041,15 @@ function configureProgress() {
   const slider = $("#progress-slider");
   const fromSlider = $("#progress-from-slider");
   const overview = state.overview;
-  const maximum = Math.max(0, overview.segments.length - 1);
-  slider.max = maximum;
-  fromSlider.max = maximum;
-  const through = Math.min(maximum, Math.max(0, Number(overview.reading_window?.through_segment ?? overview.through_segment)));
+  const total = Math.max(0, Number(overview.book?.segment_count ?? overview.reading_window?.total_segments ?? overview.segments.length));
+  const maximum = Math.max(0, total - 1);
+  const ceiling = Math.min(maximum, Math.max(0, state.readingCeiling !== null && state.readingCeiling !== undefined && Number.isFinite(Number(state.readingCeiling))
+    ? Number(state.readingCeiling)
+    : Number(overview.reading_window?.spoiler_ceiling ?? maximum)));
+  state.readingCeiling = ceiling;
+  slider.max = ceiling;
+  fromSlider.max = ceiling;
+  const through = Math.min(ceiling, Math.max(0, Number(overview.reading_window?.through_segment ?? overview.through_segment)));
   const from = Math.min(through, Math.max(0, Number(overview.reading_window?.from_segment ?? overview.from_segment ?? 0)));
   slider.value = through;
   fromSlider.value = from;
@@ -1043,7 +1071,7 @@ function beginProgressEdit() {
   input.className = "progress-inline-input";
   input.type = "number";
   input.min = "1";
-  input.max = String(state.overview.segments.length);
+  input.max = String(Math.max(1, Number(state.readingCeiling || 0) + 1));
   input.value = String(Number($("#progress-slider").value) + 1);
   input.setAttribute("aria-label", "输入阅读范围结束片段");
   count.hidden = true;
@@ -1052,7 +1080,7 @@ function beginProgressEdit() {
   const finish = async (commit) => {
     if (finished) return;
     finished = true;
-    const next = Math.max(1, Math.min(state.overview.segments.length, Number.parseInt(input.value, 10) || 1));
+    const next = Math.max(1, Math.min(Number(state.readingCeiling || 0) + 1, Number.parseInt(input.value, 10) || 1));
     input.remove();
     count.hidden = false;
     if (!commit) return;
@@ -5609,7 +5637,7 @@ $("#progress-slider").addEventListener("input", (event) => {
   const from = Math.min(value, Number($("#progress-from-slider")?.value || 0));
   $("#progress-from-slider").value = String(from);
   $("#progress-from-value").textContent = String(from + 1);
-  $("#progress-count").textContent = `第 ${value + 1} 章 · 共 ${state.overview?.segments?.length || 0} 章`;
+  $("#progress-count").textContent = `第 ${value + 1} 章 · 已读上限 ${Number(state.readingCeiling || 0) + 1} 段`;
   $("#progress-through-value").textContent = String(value + 1);
   $("#progress-chapter").textContent = "松开后显示对应进度";
 });
@@ -5619,7 +5647,7 @@ $("#progress-slider").addEventListener("change", (event) => {
   $("#progress-from-slider").value = String(from);
   state.readingFrom = from;
   state.readingThrough = through;
-  saveReadingWindowPreference(from, through);
+  saveReadingWindowPreference(from, through, state.bookId, state.readingCeiling);
   loadOverview(through, false, from);
 });
 $("#progress-from-slider").addEventListener("input", (event) => {
@@ -5634,15 +5662,17 @@ $("#progress-from-slider").addEventListener("change", (event) => {
   const from = Math.min(through, Number(event.target.value));
   state.readingFrom = from;
   state.readingThrough = through;
-  saveReadingWindowPreference(from, through);
+  saveReadingWindowPreference(from, through, state.bookId, state.readingCeiling);
   loadOverview(through, false, from);
 });
 $("#progress-show-all").addEventListener("click", () => {
   if (!state.overview) return;
-  const through = Math.max(0, state.overview.segments.length - 1);
+  const fallbackCeiling = Math.max(0, Number(state.overview.reading_window?.spoiler_ceiling ?? state.overview.book?.segment_count ?? 1) - 1);
+  const through = Math.max(0, state.readingCeiling !== null && state.readingCeiling !== undefined && Number.isFinite(Number(state.readingCeiling))
+    ? Number(state.readingCeiling) : fallbackCeiling);
   state.readingFrom = 0;
   state.readingThrough = through;
-  saveReadingWindowPreference(0, through);
+  saveReadingWindowPreference(0, through, state.bookId, state.readingCeiling);
   loadOverview(through, false, 0);
 });
 $("#progress-count").addEventListener("dblclick", beginProgressEdit);

@@ -223,3 +223,12 @@ def test_navigation_during_book_switch_keeps_loading_state_instead_of_reading_nu
     script = _text("static/app.js")
     assert "if (!state.overview || !state.overview.book)" in script
     assert 'renderLoadingProgress("读取当前书籍", 0, 1)' in script
+
+
+def test_reading_window_preserves_ceiling_when_visible_end_is_narrowed() -> None:
+    script = _text("static/app.js")
+    assert 'novel-atlas-reading-window-v2' in script
+    assert 'spoiler_ceiling' in script
+    assert 'state.readingCeiling' in script
+    assert 'const fallbackCeiling' in script
+    assert 'progress-show-all' in script

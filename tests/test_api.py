@@ -129,6 +129,31 @@ def test_reading_window_filters_end_and_marks_context_at_start(tmp_path: Path) -
         assert invalid.status_code == 422
 
 
+def test_reading_window_keeps_spoiler_ceiling_separate_from_visible_end(tmp_path: Path) -> None:
+    """新客户端可以在既定防剧透上限内收窄窗口，显示全部已读可以恢复上限。"""
+
+    with client_for(tmp_path) as client:
+        book_id = next(book["id"] for book in client.get("/api/books").json() if book["title"] == "雾川行记 · 演示")
+        narrowed = client.get(
+            f"/api/books/{book_id}/overview",
+            params={"from_segment": 1, "through_segment": 2, "spoiler_ceiling": 4},
+        )
+        assert narrowed.status_code == 200
+        assert narrowed.json()["reading_window"] == {
+            "from_segment": 1,
+            "through_segment": 2,
+            "spoiler_ceiling": 4,
+            "total_segments": 5,
+        }
+        assert all(int(item["first_segment"]) <= 2 for item in narrowed.json()["events"])
+        restored = client.get(
+            f"/api/books/{book_id}/overview",
+            params={"from_segment": 0, "through_segment": 4, "spoiler_ceiling": 4},
+        )
+        assert restored.json()["reading_window"]["through_segment"] == 4
+        assert restored.json()["reading_window"]["spoiler_ceiling"] == 4
+
+
 def test_unconfigured_provider_probe_is_explicit_and_secret_free(tmp_path: Path) -> None:
     """未配置供应商返回可操作状态；探测响应不回显密钥字段。"""
 
