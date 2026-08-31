@@ -39,9 +39,14 @@ const state = {
   mapAnimationFrame: null,
   mapMarkerPoint: null,
   mapMarkerPoint3D: null,
+  map3DTargetPoint: null,
   mapPoints: null,
   mapViewport: null,
-  mapCameraMode: ["world", "region", "step"].includes(window.localStorage.getItem("novel-atlas-map-camera-mode"))
+  mapViewportPersistTimer: null,
+  mapTransitionRunId: 0,
+  mapTransition: null,
+  mapCameraRecords: null,
+  mapCameraMode: ["world", "region", "step", "follow"].includes(window.localStorage.getItem("novel-atlas-map-camera-mode"))
     ? window.localStorage.getItem("novel-atlas-map-camera-mode") : "region",
   mapShowFullRoute: false,
   mapGraph: null,
@@ -147,6 +152,75 @@ const semanticPalette = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+const MAP_CAMERA_STORAGE_KEY = "novel-atlas-map-camera-state-v2";
+const MAP_CAMERA_SAFE_MARGIN = 0.28;
+const MAP_CAMERA_MAX_RECORDS = 48;
+
+function mapCameraScopeKey() {
+  const scope = state.storyScope;
+  return `${scope?.kind || "book"}:${scope?.id || state.bookId || "unknown"}`;
+}
+
+function mapCameraRecordKey(mapMode = state.mapMode, presentation = state.mapPresentation, scopeKey = mapCameraScopeKey(), bookId = state.bookId) {
+  return `${Number(bookId) || "unknown"}|${scopeKey}|${presentation || "atlas"}|${mapMode || "2d"}`;
+}
+
+function loadMapCameraRecords() {
+  if (state.mapCameraRecords) return state.mapCameraRecords;
+  let parsed = null;
+  try { parsed = JSON.parse(window.localStorage.getItem(MAP_CAMERA_STORAGE_KEY) || "null"); } catch { parsed = null; }
+  state.mapCameraRecords = parsed && parsed.version === 2 && parsed.entries && typeof parsed.entries === "object"
+    ? parsed : { version: 2, entries: {} };
+  return state.mapCameraRecords;
+}
+
+function finiteNumber(value) {
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function mapCameraLabel(mode = state.mapCameraMode) {
+  return mode === "world" ? "全世界" : mode === "step" ? "当前步骤" : mode === "follow" ? "跟随任务" : "当前区域";
+}
+
+function mapCameraSnapshot(mode = state.mapMode, presentation = state.mapPresentation, scopeKey = mapCameraScopeKey(), bookId = state.bookId) {
+  const key = mapCameraRecordKey(mode, presentation, scopeKey, bookId);
+  return loadMapCameraRecords().entries[key] || null;
+}
+
+function saveMapCameraSnapshot(snapshot, mode = state.mapMode, presentation = state.mapPresentation, scopeKey = mapCameraScopeKey(), bookId = state.bookId) {
+  if (!snapshot || !bookId) return;
+  const records = loadMapCameraRecords();
+  const key = mapCameraRecordKey(mode, presentation, scopeKey, bookId);
+  records.entries[key] = { ...snapshot, version: 2, updatedAt: Date.now() };
+  const entries = Object.entries(records.entries)
+    .sort((left, right) => Number(left[1]?.updatedAt || 0) - Number(right[1]?.updatedAt || 0))
+    .slice(-MAP_CAMERA_MAX_RECORDS);
+  records.entries = Object.fromEntries(entries);
+  try { window.localStorage.setItem(MAP_CAMERA_STORAGE_KEY, JSON.stringify(records)); } catch { /* 存储空间不足时保留内存状态； */ }
+}
+
+function persistMapCameraState(mode = state.mapMode, presentation = state.mapPresentation, scopeKey = mapCameraScopeKey(), bookId = state.bookId) {
+  const snapshot = state.mapViewportController?.capture?.();
+  if (snapshot) saveMapCameraSnapshot(snapshot, mode, presentation, scopeKey, bookId);
+  clearTimeout(state.mapViewportPersistTimer);
+  state.mapViewportPersistTimer = null;
+}
+
+function scheduleMapCameraPersist() {
+  clearTimeout(state.mapViewportPersistTimer);
+  state.mapViewportPersistTimer = setTimeout(() => persistMapCameraState(), 140);
+}
+
+function cancelMapTransition() {
+  cancelAnimationFrame(state.mapAnimationFrame);
+  state.mapAnimationFrame = null;
+  state.mapTransitionRunId += 1;
+  state.mapTransition = null;
+}
+
+window.addEventListener("beforeunload", () => persistMapCameraState());
+window.addEventListener("pagehide", () => persistMapCameraState());
 
 function closeSelectBox({ restoreFocus = false } = {}) {
   const active = state.activeSelectBox;
@@ -377,8 +451,7 @@ function stopMapPlayback(cancelMovement = true) {
   state.mapTimer = null;
   state.mapPlaybackRunId += 1;
   if (cancelMovement) {
-    cancelAnimationFrame(state.mapAnimationFrame);
-    state.mapAnimationFrame = null;
+    cancelMapTransition();
   }
   if (state.mapPlaybackState === "playing") state.mapPlaybackState = "paused";
 }
@@ -400,7 +473,9 @@ function disposeRelationshipGraph() {
   state.relationshipHover = null;
 }
 
-function disposeMapGraph() {
+function disposeMapGraph({ persist = true } = {}) {
+  if (persist) persistMapCameraState();
+  cancelMapTransition();
   cancelAnimationFrame(state.mapLabelFrame);
   state.mapLabelFrame = null;
   cancelAnimationFrame(state.mapRegionFrame);
@@ -417,6 +492,9 @@ function disposeMapGraph() {
   state.map3DNodes = null;
   state.map3DLinks = null;
   state.map3DCenter = null;
+  state.map3DTargetPoint = null;
+  state.mapMarkerPoint = null;
+  state.mapMarkerPoint3D = null;
   state.mapViewportController = null;
 }
 
@@ -570,12 +648,13 @@ function syncMap2DRegions(locationId) {
 
 function resetMapStateForBook() {
   stopMapPlayback();
-  disposeMapGraph();
+  disposeMapGraph({ persist: false });
   state.storyContextSerial += 1;
   state.mapStep = 0;
   state.mapViewport = null;
   state.mapMarkerPoint = null;
   state.mapMarkerPoint3D = null;
+  state.map3DTargetPoint = null;
   state.activeLocation = null;
   state.mapPlaybackState = "idle";
   state.mapLastConfirmedRegionId = null;
@@ -681,6 +760,7 @@ function renderSidebarLibraryTree() {
   host.querySelectorAll(".sidebar-book").forEach((button) => button.addEventListener("click", async () => {
     const selected = Number(button.dataset.book);
     if (selected === Number(state.bookId)) return;
+    persistMapCameraState();
     state.bookId = selected;
     resetMapStateForBook();
     $("#book-select").value = String(selected);
@@ -1734,7 +1814,7 @@ function renderTimeline() {
   const toolbar = `<div class="timeline-toolbar"><div class="segmented-control"><button class="timeline-mode${state.timelineMode === "story" ? " active" : ""}" data-mode="story" type="button">故事编年</button><button class="timeline-mode${state.timelineMode === "narrative" ? " active" : ""}" data-mode="narrative" type="button">原文顺序</button></div><span>两种顺序独立保存，回忆不会再冒充当前事件</span></div>`;
   const openThreads = (state.narrativeMemory?.open_threads || []).filter((item) => item.status === "open").slice(0, 8);
   const characterStates = (state.narrativeMemory?.character_states || []).filter((item) => item.goal || item.states?.length).slice(0, 8);
-  const memoryPanel = openThreads.length || characterStates.length ? `<details class="narrative-memory"><summary>当前承接记忆 · ${openThreads.length} 条未闭合线索</summary>${openThreads.length ? `<article><strong>尚未解决</strong><p>${openThreads.map((item) => escapeHtml(item.title)).join(" · ")}</p></article>` : ""}${characterStates.length ? `<article><strong>人物当前状态</strong><p>${characterStates.map((item) => `${escapeHtml(item.name)}：${escapeHtml(item.goal || item.states?.join("、") || "状态已记录")}${item.location_name ? `，位于${escapeHtml(item.location_name)}` : ""}`).join("<br>")}</p></article>` : ""}</details>` : "";
+  const memoryPanel = openThreads.length || characterStates.length ? `<details class="narrative-memory"><summary>当前承接记忆 · ${openThreads.length} 条未闭合线索</summary><div class="narrative-memory-content">${openThreads.length ? `<article><strong>尚未解决</strong><p>${openThreads.map((item) => escapeHtml(item.title)).join(" · ")}</p></article>` : ""}${characterStates.length ? `<article><strong>人物当前状态</strong><p>${characterStates.map((item) => `${escapeHtml(item.name)}：${escapeHtml(item.goal || item.states?.join("、") || "状态已记录")}${item.location_name ? `，位于${escapeHtml(item.location_name)}` : ""}`).join("<br>")}</p></article>` : ""}</div></details>` : "";
   $("#view-panel").innerHTML = panelHead("剧情编年史", "故事编年由无环时间约束计算，原文顺序只表示作者何时讲到这件事") + toolbar + conflictNotice + memoryPanel + `<div class="timeline">${cards}</div>`;
   $$(".timeline-mode").forEach((button) => button.addEventListener("click", () => {
     state.timelineMode = button.dataset.mode;
@@ -2249,7 +2329,7 @@ function renderMap() {
   const volumeModes = state.mapMode === "3d" ? `<div class="segmented-control map-volume-modes" aria-label="三维区域显示"><button class="map-volume-mode${state.map3DVolumeMode === "shell" ? " active" : ""}" data-volume-mode="shell" type="button">外壳</button><button class="map-volume-mode${state.map3DVolumeMode === "section" ? " active" : ""}" data-volume-mode="section" type="button">剖面</button><button class="map-volume-mode${state.map3DVolumeMode === "layer" ? " active" : ""}" data-volume-mode="layer" type="button">当前层</button></div>` : "";
   const mapValidated = state.mapLayout?.validation_state !== "invalid";
   const mapModes = `<div class="map-view-toolbar"><div class="map-toolbar-groups"><div class="segmented-control" aria-label="地图表现"><button class="map-presentation${state.mapPresentation === "atlas" ? " active" : ""}" data-presentation="atlas" type="button" ${mapValidated ? "" : "disabled"}>语义世界图</button><button class="map-presentation${state.mapPresentation === "evidence" ? " active" : ""}" data-presentation="evidence" type="button">证据逻辑图</button></div><div class="segmented-control" aria-label="地图维度"><button class="map-mode${state.mapMode === "2d" ? " active" : ""}" data-mode="2d" type="button">2D</button><button class="map-mode${state.mapMode === "3d" ? " active" : ""}" data-mode="3d" type="button">3D</button></div>${volumeModes}</div><span>${state.mapMode === "3d" ? "拖动旋转，滚轮缩放；区域体积只使用有证据的包含层级" : state.mapPresentation === "atlas" ? "实线是原文包含区域；虚线是故事组织区域" : "只显示能够回到原文的方向、包含和移动关系"}</span></div>`;
-  const viewportControls = `<div class="map-viewport-tools"><details class="map-view-menu"><summary>视角 · ${state.mapCameraMode === "world" ? "全世界" : state.mapCameraMode === "step" ? "当前步骤" : "当前区域"}</summary><div class="map-view-menu-popover" aria-label="地图视角"><button id="map-fit-world" data-camera-mode="world" aria-pressed="${state.mapCameraMode === "world"}" type="button">全世界</button><button id="map-fit-region" data-camera-mode="region" aria-pressed="${state.mapCameraMode === "region"}" type="button">当前区域</button><button id="map-fit-step" data-camera-mode="step" aria-pressed="${state.mapCameraMode === "step"}" type="button">当前步骤</button><button id="map-zoom-reset" type="button">恢复当前视角</button></div></details><div class="map-viewport-controls" aria-label="地图缩放"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div></div>`;
+  const viewportControls = `<div class="map-viewport-tools"><details class="map-view-menu"><summary>视角 · ${escapeHtml(mapCameraLabel())}</summary><div class="map-view-menu-popover" aria-label="地图视角"><button id="map-fit-world" data-camera-mode="world" aria-pressed="${state.mapCameraMode === "world"}" type="button">全世界</button><button id="map-fit-region" data-camera-mode="region" aria-pressed="${state.mapCameraMode === "region"}" type="button">当前区域</button><button id="map-fit-step" data-camera-mode="step" aria-pressed="${state.mapCameraMode === "step"}" type="button">当前步骤</button><button id="map-fit-follow" data-camera-mode="follow" aria-pressed="${state.mapCameraMode === "follow"}" type="button">跟随任务</button><button id="map-zoom-reset" type="button">恢复当前视角</button></div></details><div class="map-viewport-controls" aria-label="地图缩放"><button id="map-zoom-out" type="button" aria-label="缩小地图">−</button><button id="map-zoom-in" type="button" aria-label="放大地图">＋</button></div></div>`;
   const mapControlDeck = `<div class="map-control-deck">${mapModes}${viewportControls}</div>`;
   const mapCanvas = state.mapMode === "3d"
     ? `<div class="map-3d-shell"><div id="map-3d" class="map-3d" role="img" aria-label="可旋转、缩放并逐步播放的三维故事地图"></div><div id="map-3d-labels" class="map-3d-labels" aria-hidden="true"></div><div class="map-3d-axis" aria-hidden="true">${directionalCount ? "<span>北 ↑</span>" : "<span>平面方位未知</span>"}<span>纵深＝有证据的包含层级</span>${directionalCount ? "<span>东 →</span>" : "<span>拓扑坐标</span>"}</div></div>`
@@ -2266,16 +2346,21 @@ function renderMap() {
   $$(".map-mode").forEach((button) => button.addEventListener("click", () => {
     const nextMode = button.dataset.mode;
     if (nextMode === state.mapMode) return;
+    persistMapCameraState();
     state.mapMode = nextMode;
     window.localStorage.setItem("novel-atlas-map-mode", nextMode);
-    disposeMapGraph();
+    state.mapViewport = null;
+    disposeMapGraph({ persist: false });
     renderMap();
   }));
   $$(".map-presentation").forEach((button) => button.addEventListener("click", () => {
     const nextPresentation = button.dataset.presentation;
     if (nextPresentation === state.mapPresentation) return;
+    persistMapCameraState();
     state.mapPresentation = nextPresentation;
     window.localStorage.setItem("novel-atlas-map-presentation", nextPresentation);
+    state.mapViewport = null;
+    disposeMapGraph({ persist: false });
     renderMap();
   }));
   $$(".map-volume-mode").forEach((button) => button.addEventListener("click", () => {
@@ -2290,8 +2375,15 @@ function renderMap() {
     if (button.dataset.cameraMode) {
       state.mapCameraMode = button.dataset.cameraMode;
       window.localStorage.setItem("novel-atlas-map-camera-mode", state.mapCameraMode);
+      if (state.mapCameraMode === "follow") {
+        const currentEvent = storyMapSteps()[state.mapStep];
+        const point = state.mapPoints?.get(Number(currentEvent?.location_entity_id));
+        const plan = point ? state.mapViewportController?.planFollow?.(point, MAP_CAMERA_SAFE_MARGIN) : null;
+        if (plan?.moved) state.mapViewportController?.interpolate?.(plan, 1);
+        state.mapViewportController?.persist?.();
+      }
       const menu = button.closest("details");
-      const label = state.mapCameraMode === "world" ? "全世界" : state.mapCameraMode === "step" ? "当前步骤" : "当前区域";
+      const label = mapCameraLabel();
       menu?.querySelector("summary")?.replaceChildren(document.createTextNode(`视角 · ${label}`));
       menu?.querySelectorAll("[data-camera-mode]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
     }
@@ -2348,7 +2440,7 @@ function renderMap() {
     if (state.mapShowFullRoute) state.mapViewportController?.fitAll();
     else if (state.mapMarkerPoint) state.mapViewportController?.focus(state.mapMarkerPoint, true, true);
   });
-  requestAnimationFrame(() => setMapStep(state.mapStep, false));
+  requestAnimationFrame(() => setMapStep(state.mapStep, false, { initial: true }));
   requestAnimationFrame(() => {
     const currentLocation = journey[state.mapStep]?.location_entity_id;
     if (currentLocation !== null && currentLocation !== undefined) renderMapLocationDetails(Number(currentLocation));
@@ -2555,14 +2647,102 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
   resize();
   state.mapGraphResizeObserver = new ResizeObserver(resize);
   state.mapGraphResizeObserver.observe(host);
-  const cameraFocus = (node, animate = true) => {
+  const cameraFocus = (node, animate = true, resetScale = false) => {
     if (!node) return;
-    graph.cameraPosition({ x: node.x + 190, y: node.y - 125, z: node.z + 260 }, { x: node.x, y: node.y, z: node.z }, animate ? 520 : 0);
+    const camera = graph.camera?.();
+    const currentTarget = controls.target || { x: 0, y: 0, z: 0 };
+    const currentPosition = camera?.position;
+    const offset = !resetScale && currentPosition
+      ? { x: currentPosition.x - currentTarget.x, y: currentPosition.y - currentTarget.y, z: currentPosition.z - currentTarget.z }
+      : { x: 190, y: -125, z: 260 };
+    const validOffset = Math.hypot(offset.x, offset.y, offset.z) > 8 ? offset : { x: 190, y: -125, z: 260 };
+    graph.cameraPosition({ x: node.x + validOffset.x, y: node.y + validOffset.y, z: node.z + validOffset.z }, { x: node.x, y: node.y, z: node.z }, animate ? 520 : 0);
+  };
+  const vectorSnapshot = (value, fallback = { x: 0, y: 0, z: 0 }) => ({
+    x: finiteNumber(value?.x) ?? fallback.x,
+    y: finiteNumber(value?.y) ?? fallback.y,
+    z: finiteNumber(value?.z) ?? fallback.z,
+  });
+  const cameraExtent = Math.max(900, Math.abs(centerX), Math.abs(centerY), ...pointValues.map((point) => Math.max(Math.abs(point.x - centerX), Math.abs(point.y - centerY)))) * 8;
+  const sanitizeCameraSnapshot = (snapshot) => {
+    if (!snapshot?.position || !snapshot?.target) return null;
+    const target = vectorSnapshot(snapshot.target);
+    const rawPosition = vectorSnapshot(snapshot.position, { x: 0, y: 0, z: 640 });
+    const delta = {
+      x: rawPosition.x - target.x,
+      y: rawPosition.y - target.y,
+      z: rawPosition.z - target.z,
+    };
+    const rawDistance = Math.hypot(delta.x, delta.y, delta.z);
+    const distance = Math.max(8, Math.min(100000, Number.isFinite(rawDistance) && rawDistance > 0 ? rawDistance : 640));
+    const scale = distance / (rawDistance || 640);
+    const clampCoordinate = (value) => Math.max(-cameraExtent, Math.min(cameraExtent, value));
+    const safeTarget = { x: clampCoordinate(target.x), y: clampCoordinate(target.y), z: clampCoordinate(target.z) };
+    const safePosition = {
+      x: clampCoordinate(safeTarget.x + delta.x * scale),
+      y: clampCoordinate(safeTarget.y + delta.y * scale),
+      z: clampCoordinate(safeTarget.z + delta.z * scale),
+    };
+    return { position: safePosition, target: safeTarget };
+  };
+  const currentCameraSnapshot = () => ({
+    position: vectorSnapshot(graph.camera()?.position, { x: 0, y: 0, z: 640 }),
+    target: vectorSnapshot(controls.target),
+  });
+  const pointInSafeArea = (point, margin = MAP_CAMERA_SAFE_MARGIN) => {
+    const node = nodes.find((item) => item.kind === "place" && item.mapPoint === point);
+    if (!node || !host.clientWidth || !host.clientHeight) return true;
+    const projected = graph.graph2ScreenCoords(node.x, node.y, node.z || 0);
+    if (!projected || !Number.isFinite(projected.x) || !Number.isFinite(projected.y)) return true;
+    const safeX = host.clientWidth * Math.max(0.05, Math.min(0.45, margin));
+    const safeY = host.clientHeight * Math.max(0.05, Math.min(0.45, margin));
+    return projected.x >= safeX && projected.x <= host.clientWidth - safeX
+      && projected.y >= safeY && projected.y <= host.clientHeight - safeY;
+  };
+  const planFollow = (point, margin = MAP_CAMERA_SAFE_MARGIN) => {
+    const start = currentCameraSnapshot();
+    if (pointInSafeArea(point, margin)) return { kind: "3d", start, end: { position: { ...start.position }, target: { ...start.target } }, moved: false };
+    const node = nodes.find((item) => item.kind === "place" && item.mapPoint === point);
+    if (!node) return { kind: "3d", start, end: { position: { ...start.position }, target: { ...start.target } }, moved: false };
+    const endTarget = { x: node.x, y: node.y, z: node.z };
+    const offset = { x: start.position.x - start.target.x, y: start.position.y - start.target.y, z: start.position.z - start.target.z };
+    const endPosition = { x: endTarget.x + offset.x, y: endTarget.y + offset.y, z: endTarget.z + offset.z };
+    return { kind: "3d", start, end: { position: endPosition, target: endTarget }, moved: true };
+  };
+  const applyCameraSnapshot = (snapshot, duration = 0) => {
+    const safeSnapshot = sanitizeCameraSnapshot(snapshot);
+    if (!safeSnapshot) return false;
+    graph.cameraPosition(safeSnapshot.position, safeSnapshot.target, duration);
+    if (controls.target?.set) controls.target.set(safeSnapshot.target.x, safeSnapshot.target.y, safeSnapshot.target.z);
+    controls.update?.();
+    return true;
   };
   state.mapViewportController = {
-    focus(point, force = false, resetScale = false) {
+    capture() { return { kind: "3d", camera: currentCameraSnapshot() }; },
+    cancelTransition() { cancelMapTransition(); },
+    persist() { persistMapCameraState(); },
+    restore(snapshot) {
+      if (!applyCameraSnapshot(snapshot?.camera, 0)) return false;
+      refresh();
+      return true;
+    },
+    planFollow,
+    interpolate(plan, progress) {
+      if (!plan?.start || !plan?.end) return;
+      const interpolateVector = (start, end) => ({
+        x: start.x + (end.x - start.x) * progress,
+        y: start.y + (end.y - start.y) * progress,
+        z: start.z + (end.z - start.z) * progress,
+      });
+      applyCameraSnapshot({ position: interpolateVector(plan.start.position, plan.end.position), target: interpolateVector(plan.start.target, plan.end.target) }, 0);
+      refresh();
+    },
+    focus(point) {
       const node = nodes.find((item) => item.kind !== "actor" && item.mapPoint === point);
-      if (node) cameraFocus(node, true);
+      if (node) {
+        cameraFocus(node, true);
+        scheduleMapCameraPersist();
+      }
     },
     focusGroup(points = [], anchor = null) {
       const selected = new Set(points.filter(Boolean));
@@ -2573,9 +2753,11 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
       } else {
         graph.zoomToFit(480, 76, (node) => node.kind !== "actor" && node.focused !== false);
       }
+      scheduleMapCameraPersist();
     },
     fitAll() {
       graph.zoomToFit(520, 78, (node) => node.kind !== "actor");
+      scheduleMapCameraPersist();
     },
   };
   const zoomCamera = (factor) => {
@@ -2586,21 +2768,36 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
       y: target.y + (camera.position.y - target.y) * factor,
       z: target.z + (camera.position.z - target.z) * factor,
     }, target, 180);
+    scheduleMapCameraPersist();
   };
   $("#map-zoom-in")?.addEventListener("click", () => zoomCamera(0.82));
   $("#map-zoom-out")?.addEventListener("click", () => zoomCamera(1.18));
-  $("#map-zoom-reset")?.addEventListener("click", () => graph.zoomToFit(520, 78, (node) => node.kind !== "actor"));
-  $("#map-fit-world")?.addEventListener("click", () => graph.zoomToFit(520, 88, (node) => node.kind === "place"));
+  $("#map-zoom-reset")?.addEventListener("click", () => {
+    const saved = mapCameraSnapshot("3d");
+    if (!state.mapViewportController.restore(saved)) graph.zoomToFit(520, 78, (node) => node.kind !== "actor");
+    persistMapCameraState();
+  });
+  $("#map-fit-world")?.addEventListener("click", () => {
+    graph.zoomToFit(520, 88, (node) => node.kind === "place");
+    scheduleMapCameraPersist();
+  });
   $("#map-fit-step")?.addEventListener("click", () => {
     const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
     const node = nodes.find((item) => item.kind === "place" && item.locationId === currentLocationId);
-    if (node) cameraFocus(node, true);
+    if (node) {
+      cameraFocus(node, true, false);
+      scheduleMapCameraPersist();
+    }
   });
   $("#map-fit-region")?.addEventListener("click", () => {
     const currentLocationId = Number(storyMapSteps()[state.mapStep]?.location_entity_id || 0);
     const region = (state.mapLayout?.regions || []).find((item) => (item.node_ids || []).some((id) => Number(id) === currentLocationId));
     if (region) graph.zoomToFit(520, 90, (node) => node.kind === "place" && (region.node_ids || []).some((id) => Number(id) === node.locationId));
+    scheduleMapCameraPersist();
   });
+  const scheduleControlsPersist = () => scheduleMapCameraPersist();
+  controls.addEventListener?.("change", scheduleControlsPersist);
+  controls.addEventListener?.("end", () => persistMapCameraState());
   let lastLabelDraw = 0;
   const drawLabels = (time) => {
     if (state.mapGraph !== graph) return;
@@ -2613,7 +2810,10 @@ function createMapGraph3D(locations, geographyRelations, routeTopology, journey,
   state.mapLabelFrame = requestAnimationFrame(drawLabels);
   setTimeout(() => {
     if (state.mapGraph !== graph) return;
-    if (state.mapCameraMode === "world") {
+    const saved = mapCameraSnapshot("3d");
+    if (saved && state.mapViewportController.restore(saved)) {
+      // 已恢复按书籍和范围保存的相机；
+    } else if (state.mapCameraMode === "world") {
       graph.zoomToFit(0, 78, (node) => node.kind !== "actor");
     } else if (state.mapCameraMode === "step" && currentNode) {
       cameraFocus(currentNode, false);
@@ -2766,40 +2966,79 @@ function renderMapRegionDetails(regionId) {
   activateMapRailTab("location");
 }
 
-// 地图使用视窗坐标完成滚轮缩放和空白处拖动，节点点击仍然用于跳转剧情；
+// 地图使用视窗坐标完成滚轮缩放和空白处拖动；步骤更新只在安全区外平滑移动相机；
 function bindMapViewport() {
   const svg = $(".map-svg");
   if (!svg) return;
   const bounds = state.mapBounds || { minX: 0, maxX: 900, minY: 0, maxY: 470 };
+  const ratio = 900 / 470;
+  const worldWidth = Math.max(900, bounds.maxX - bounds.minX);
+  const maxWidth = worldWidth * 8;
+  // 给镜头保留独立的安全缓冲；内容仍以真实地图边界绘制，但跟随镜头可以
+  // 在边缘留出稳定的安全区，避免人物贴边时无法满足可视范围；
+  const cameraPaddingX = Math.max(120, worldWidth * 0.24);
+  const cameraPaddingY = Math.max(80, (bounds.maxY - bounds.minY) * 0.24);
+  const cameraBounds = {
+    minX: bounds.minX - cameraPaddingX,
+    maxX: bounds.maxX + cameraPaddingX,
+    minY: bounds.minY - cameraPaddingY,
+    maxY: bounds.maxY + cameraPaddingY,
+  };
+  const clampAxis = (value, size, minimum, maximum) => maximum - minimum <= size
+    ? (minimum + maximum - size) / 2
+    : Math.max(minimum, Math.min(maximum - size, value));
+  const normalizeView = (candidate) => {
+    const width = Math.max(70, Math.min(maxWidth, finiteNumber(candidate?.width) || 900));
+    const height = width / ratio;
+    const x = clampAxis(finiteNumber(candidate?.x) ?? bounds.minX, width, cameraBounds.minX, cameraBounds.maxX);
+    const y = clampAxis(finiteNumber(candidate?.y) ?? bounds.minY, height, cameraBounds.minY, cameraBounds.maxY);
+    return { x, y, width, height };
+  };
   const currentEvent = storyMapSteps()[state.mapStep];
   const initialPoint = state.mapPoints?.get(Number(currentEvent?.location_entity_id)) || [...(state.mapPoints?.values() || [])][0] || { x: 450, y: 235 };
-  const defaultView = { x: initialPoint.x - 450, y: initialPoint.y - 235, width: 900, height: 470 };
-  const view = state.mapViewport ? { ...state.mapViewport } : { ...defaultView };
-  const apply = () => {
-    const clampAxis = (value, size, minimum, maximum) => maximum - minimum <= size
-      ? (minimum + maximum - size) / 2
-      : Math.max(minimum, Math.min(maximum - size, value));
-    view.x = clampAxis(view.x, view.width, bounds.minX, bounds.maxX);
-    view.y = clampAxis(view.y, view.height, bounds.minY, bounds.maxY);
+  const defaultView = normalizeView({ x: initialPoint.x - 450, y: initialPoint.y - 235, width: 900 });
+  const saved = mapCameraSnapshot("2d");
+  const view = normalizeView(saved?.viewBox || state.mapViewport || defaultView);
+  const apply = ({ persist = true } = {}) => {
+    Object.assign(view, normalizeView(view));
     svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.width} ${view.height}`);
     const visualScale = 900 / view.width;
     svg.classList.toggle("lod-low", visualScale < 0.42);
     svg.classList.toggle("lod-medium", visualScale >= 0.42 && visualScale < 0.82);
     svg.classList.toggle("lod-high", visualScale >= 0.82);
     state.mapViewport = { ...view };
+    if (persist) scheduleMapCameraPersist();
+  };
+  const pointInSafeArea = (point, margin = MAP_CAMERA_SAFE_MARGIN, candidate = view) => {
+    if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return true;
+    const safeX = candidate.width * Math.max(0.05, Math.min(0.45, margin));
+    const safeY = candidate.height * Math.max(0.05, Math.min(0.45, margin));
+    return point.x >= candidate.x + safeX && point.x <= candidate.x + candidate.width - safeX
+      && point.y >= candidate.y + safeY && point.y <= candidate.y + candidate.height - safeY;
+  };
+  const planFollow = (point, margin = MAP_CAMERA_SAFE_MARGIN) => {
+    const start = { ...view };
+    if (pointInSafeArea(point, margin, start)) return { kind: "2d", start, end: { ...start }, moved: false };
+    const safeX = start.width * Math.max(0.05, Math.min(0.45, margin));
+    const safeY = start.height * Math.max(0.05, Math.min(0.45, margin));
+    const end = { ...start };
+    if (point.x < start.x + safeX) end.x = point.x - safeX;
+    else if (point.x > start.x + start.width - safeX) end.x = point.x - start.width + safeX;
+    if (point.y < start.y + safeY) end.y = point.y - safeY;
+    else if (point.y > start.y + start.height - safeY) end.y = point.y - start.height + safeY;
+    Object.assign(end, normalizeView(end));
+    return { kind: "2d", start, end, moved: end.x !== start.x || end.y !== start.y };
   };
   const zoom = (factor, clientX = null, clientY = null) => {
     const rect = svg.getBoundingClientRect();
     const px = clientX === null ? 0.5 : Math.max(0, Math.min(1, (clientX - rect.left) / Math.max(1, rect.width)));
     const py = clientY === null ? 0.5 : Math.max(0, Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)));
-    const worldWidth = Math.max(900, bounds.maxX - bounds.minX);
-    const maxWidth = worldWidth * 8;
-    const nextWidth = Math.max(70, Math.min(maxWidth, view.width * factor));
-    const nextHeight = nextWidth * 470 / 900;
-    view.x += (view.width - nextWidth) * px;
-    view.y += (view.height - nextHeight) * py;
-    view.width = nextWidth;
-    view.height = nextHeight;
+    const next = normalizeView({
+      width: view.width * factor,
+      x: view.x + (view.width - view.width * factor) * px,
+      y: view.y + (view.height - view.width * factor / ratio) * py,
+    });
+    Object.assign(view, next);
     apply();
   };
   svg.addEventListener("wheel", (event) => {
@@ -2810,6 +3049,7 @@ function bindMapViewport() {
   let dragging = null;
   svg.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || event.target.closest(".map-node, .journey-route, .semantic-region")) return;
+    cancelMapTransition();
     dragging = { x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y };
     svg.classList.add("dragging");
     svg.setPointerCapture(event.pointerId);
@@ -2826,6 +3066,7 @@ function bindMapViewport() {
     dragging = null;
     svg.classList.remove("dragging");
     if (svg.hasPointerCapture(event.pointerId)) svg.releasePointerCapture(event.pointerId);
+    persistMapCameraState();
   };
   svg.addEventListener("pointerup", stopDragging);
   svg.addEventListener("pointercancel", stopDragging);
@@ -2834,24 +3075,39 @@ function bindMapViewport() {
   $("#map-zoom-reset")?.addEventListener("click", () => {
     Object.assign(view, defaultView);
     apply();
+    persistMapCameraState();
   });
   state.mapViewportController = {
+    capture() { return { kind: "2d", viewBox: { ...view } }; },
+    cancelTransition() { cancelMapTransition(); },
+    persist() { persistMapCameraState(); },
+    restore(snapshot) {
+      if (!snapshot?.viewBox) return false;
+      Object.assign(view, normalizeView(snapshot.viewBox));
+      apply({ persist: false });
+      return true;
+    },
+    planFollow,
+    interpolate(plan, progress) {
+      if (!plan?.start || !plan?.end) return;
+      Object.assign(view, normalizeView({
+        x: plan.start.x + (plan.end.x - plan.start.x) * progress,
+        y: plan.start.y + (plan.end.y - plan.start.y) * progress,
+        width: plan.start.width,
+      }));
+      apply({ persist: false });
+    },
+    isPointInSafeArea(point, margin = MAP_CAMERA_SAFE_MARGIN) { return pointInSafeArea(point, margin); },
     focus(point, force = false, resetScale = false) {
-      if (resetScale) {
-        view.width = 900;
-        view.height = 470;
-      }
-      const marginX = view.width * 0.2;
-      const marginY = view.height * 0.2;
-      const outside = point.x < view.x + marginX || point.x > view.x + view.width - marginX
-        || point.y < view.y + marginY || point.y > view.y + view.height - marginY;
-      if (!force && !outside) return;
-      view.x = point.x - view.width / 2;
-      view.y = point.y - view.height / 2;
+      if (!point) return;
+      if (resetScale) Object.assign(view, normalizeView({ ...defaultView, x: view.x, y: view.y }));
+      if (!force && pointInSafeArea(point, 0.2)) return;
+      Object.assign(view, normalizeView({ ...view, x: point.x - view.width / 2, y: point.y - view.height / 2 }));
       apply();
+      persistMapCameraState();
     },
     focusGroup(points, anchor = null) {
-      const available = points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+      const available = (points || []).filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y));
       if (!available.length) {
         if (anchor) this.focus(anchor, true);
         return;
@@ -2860,30 +3116,23 @@ function bindMapViewport() {
       const maxX = Math.max(...available.map((point) => point.x));
       const minY = Math.min(...available.map((point) => point.y));
       const maxY = Math.max(...available.map((point) => point.y));
-      const ratio = 900 / 470;
       const requiredWidth = Math.max(620, maxX - minX + 240, (maxY - minY + 180) * ratio);
-      view.width = requiredWidth;
-      view.height = requiredWidth / ratio;
-      view.x = (minX + maxX - view.width) / 2;
-      view.y = (minY + maxY - view.height) / 2;
+      Object.assign(view, normalizeView({ width: requiredWidth, x: (minX + maxX - requiredWidth) / 2, y: (minY + maxY - requiredWidth / ratio) / 2 }));
       apply();
+      persistMapCameraState();
     },
     fitAll() {
-      const width = Math.max(900, bounds.maxX - bounds.minX);
-      const height = Math.max(470, bounds.maxY - bounds.minY);
-      const ratio = 900 / 470;
-      view.width = Math.max(width, height * ratio);
-      view.height = view.width / ratio;
-      view.x = (bounds.minX + bounds.maxX - view.width) / 2;
-      view.y = (bounds.minY + bounds.maxY - view.height) / 2;
+      const width = Math.max(900, bounds.maxX - bounds.minX, (bounds.maxY - bounds.minY) * ratio);
+      Object.assign(view, normalizeView({ width, x: (bounds.minX + bounds.maxX - width) / 2, y: (bounds.minY + bounds.maxY - width / ratio) / 2 }));
       apply();
+      persistMapCameraState();
     },
   };
   $("#map-fit-world")?.addEventListener("click", () => state.mapViewportController.fitAll());
   $("#map-fit-step")?.addEventListener("click", () => {
     const event = storyMapSteps()[state.mapStep];
     const point = state.mapPoints?.get(Number(event?.location_entity_id));
-    if (point) state.mapViewportController.focus(point, true, true);
+    if (point) state.mapViewportController.focus(point, true, false);
   });
   $("#map-fit-region")?.addEventListener("click", () => {
     const event = storyMapSteps()[state.mapStep];
@@ -2897,7 +3146,7 @@ function bindMapViewport() {
     const regionPoints = (region.node_ids || []).map((id) => state.mapPoints?.get(Number(id))).filter(Boolean);
     state.mapViewportController.focusGroup(regionPoints, state.mapPoints?.get(locationId));
   });
-  apply();
+  apply({ persist: false });
 }
 
 function syncMap3DStep(event, visibleLocationIds, step, animate) {
@@ -2950,14 +3199,13 @@ function syncMap3DStep(event, visibleLocationIds, step, animate) {
     ? null
     : nodes.find((node) => node.kind !== "actor" && node.locationId === currentLocationId);
   if (!target) {
-    cancelAnimationFrame(state.mapAnimationFrame);
-    state.mapAnimationFrame = null;
+    state.map3DTargetPoint = null;
     actor.visible = false;
     graph.refresh();
     return;
   }
   actor.visible = true;
-  animateMapMarker3D({ x: target.x, y: target.y, z: target.z + 34 }, animate);
+  state.map3DTargetPoint = { x: target.x, y: target.y, z: target.z + 34 };
   graph.refresh();
 }
 
@@ -3000,7 +3248,97 @@ function animateMapMarker3D(target, animate) {
   state.mapAnimationFrame = requestAnimationFrame(frame);
 }
 
-function setMapStep(nextStep, animate = true) {
+function readMapMarkerPoint() {
+  const marker = $("#journey-avatar");
+  const transform = marker?.getAttribute("transform") || "";
+  const match = transform.match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)/);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+
+function setMapMarkerPoint(point) {
+  if (!point) return;
+  const marker = $("#journey-avatar");
+  marker?.removeAttribute("hidden");
+  marker?.setAttribute("transform", `translate(${point.x} ${point.y})`);
+  state.mapMarkerPoint = { x: point.x, y: point.y };
+}
+
+function setMapMarkerPoint3D(point) {
+  const actor = state.map3DActor;
+  if (!actor || !point) return;
+  actor.visible = true;
+  actor.x = point.x;
+  actor.y = point.y;
+  actor.z = point.z;
+  actor.fx = point.x;
+  actor.fy = point.y;
+  actor.fz = point.z;
+  state.mapMarkerPoint3D = { x: point.x, y: point.y, z: point.z };
+  state.mapGraph?.refresh?.();
+}
+
+function startMapStepTransition(target, animate = true, { preserveCamera = false } = {}) {
+  cancelMapTransition();
+  if (!target) return;
+  const marker = $("#journey-avatar");
+  const actor = state.map3DActor;
+  const start2D = state.mapMarkerPoint || readMapMarkerPoint() || target;
+  const target3D = state.map3DTargetPoint;
+  const start3D = state.mapMarkerPoint3D || (actor ? { x: actor.x, y: actor.y, z: actor.z } : target3D);
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const controller = state.mapViewportController;
+  const cameraPlan = !preserveCamera && state.mapCameraMode !== "world"
+    ? controller?.planFollow?.(target, MAP_CAMERA_SAFE_MARGIN) : null;
+  // 步骤切换可能紧跟在缩放或拖动之后；先把当前视角同步写入记录，
+  // 避免防抖窗口内的旧视角覆盖用户刚刚完成的操作；
+  persistMapCameraState();
+  const same2D = !start2D || (start2D.x === target.x && start2D.y === target.y);
+  const same3D = !start3D || !target3D || (start3D.x === target3D.x && start3D.y === target3D.y && start3D.z === target3D.z);
+  const markerMoving = state.mapMode === "2d" ? !same2D : !same3D;
+  const shouldAnimate = Boolean(animate && !reduceMotion && (markerMoving || cameraPlan?.moved));
+  if (!shouldAnimate) {
+    if (state.mapMode === "2d") setMapMarkerPoint(target);
+    if (state.mapMode === "3d" && target3D) setMapMarkerPoint3D(target3D);
+    if (cameraPlan?.moved) controller?.interpolate?.(cameraPlan, 1);
+    persistMapCameraState();
+    return;
+  }
+  const runId = ++state.mapTransitionRunId;
+  const started = performance.now();
+  const duration = 720 / state.mapPlaybackSpeed;
+  state.mapTransition = { runId, started, duration, cameraPlan };
+  const frame = (now) => {
+    if (runId !== state.mapTransitionRunId || state.view !== "map") return;
+    const progress = Math.min(1, (now - started) / duration);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    if (state.mapMode === "2d" && marker && start2D) {
+      setMapMarkerPoint({
+        x: start2D.x + (target.x - start2D.x) * eased,
+        y: start2D.y + (target.y - start2D.y) * eased,
+      });
+    }
+    if (state.mapMode === "3d" && target3D && start3D) {
+      setMapMarkerPoint3D({
+        x: start3D.x + (target3D.x - start3D.x) * eased,
+        y: start3D.y + (target3D.y - start3D.y) * eased,
+        z: start3D.z + (target3D.z - start3D.z) * eased,
+      });
+    }
+    if (cameraPlan?.moved) controller?.interpolate?.(cameraPlan, eased);
+    if (progress < 1) {
+      state.mapAnimationFrame = requestAnimationFrame(frame);
+    } else {
+      if (state.mapMode === "2d") setMapMarkerPoint(target);
+      if (state.mapMode === "3d" && target3D) setMapMarkerPoint3D(target3D);
+      state.mapAnimationFrame = null;
+      state.mapTransition = null;
+      persistMapCameraState();
+    }
+  };
+  state.mapAnimationFrame = requestAnimationFrame(frame);
+}
+
+function setMapStep(nextStep, animate = true, options = {}) {
   const journey = storyMapSteps();
   if (!journey.length || state.view !== "map") return;
   const step = Math.max(0, Math.min(Number(nextStep), journey.length - 1));
@@ -3008,6 +3346,7 @@ function setMapStep(nextStep, animate = true) {
   // 只有当前事件明确给出地点时才显示人物标记；地点未知时保留上一个真实坐标作为
   // 下一次移动的起点，但隐藏标记，避免把上一地点冒充为当前地点；
   const target = event.location_entity_id !== null ? state.mapPoints?.get(event.location_entity_id) : null;
+  cancelMapTransition();
   state.mapStep = step;
   const focusEvents = journey.slice(Math.max(0, step - 5), Math.min(journey.length, step + 4));
   const visibleLocationIds = new Set(
@@ -3056,22 +3395,9 @@ function setMapStep(nextStep, animate = true) {
   const regionEmphasis = syncMap2DRegions(event.location_entity_id);
   syncMap3DStep(event, visibleLocationIds, step, animate);
   if (target) {
-    const focusPoints = [...visibleLocationIds].map((locationId) => state.mapPoints?.get(locationId)).filter(Boolean);
-    if (state.mapCameraMode === "world") {
-      state.mapViewportController?.fitAll();
-    } else if (state.mapCameraMode === "step") {
-      state.mapViewportController?.focus(target, true);
-    } else {
-      const currentRegion = (state.mapLayout?.regions || []).find((region) => String(region.id) === String(regionEmphasis.primaryId));
-      const regionPoints = (currentRegion?.node_ids || []).map((id) => state.mapPoints?.get(Number(id))).filter(Boolean);
-      state.mapViewportController?.focusGroup(regionPoints.length ? regionPoints : focusPoints, target);
-    }
-    if (state.mapMode === "2d") {
-      animateMapMarker(target, animate);
-    }
+    startMapStepTransition(target, animate, { preserveCamera: Boolean(options.initial) });
   } else if (state.mapMode === "2d") {
-    cancelAnimationFrame(state.mapAnimationFrame);
-    state.mapAnimationFrame = null;
+    cancelMapTransition();
     $("#journey-avatar")?.setAttribute("hidden", "");
   }
   if (event.location_entity_id !== null && event.location_entity_id !== undefined) {
@@ -4625,6 +4951,7 @@ async function deleteFolder(row) {
 }
 
 async function openManagedBook(row) {
+  persistMapCameraState();
   state.bookId = Number(row.dataset.book);
   resetMapStateForBook();
   $("#book-select").value = String(state.bookId);
@@ -4660,7 +4987,10 @@ async function deleteManagedBook(row) {
   if (!await confirmAction("删除书籍", `《${book?.title || "这本书"}》的原文、分析结果和修改记录将被删除`, "删除书籍")) return;
   try {
     await api(`/api/books/${id}`, { method: "DELETE" });
-    if (Number(state.bookId) === id) state.bookId = null;
+    if (Number(state.bookId) === id) {
+      persistMapCameraState();
+      state.bookId = null;
+    }
     await refreshLibraryData();
     renderLibraryManager();
     if (!state.bookId && state.books.length) {
@@ -4683,6 +5013,7 @@ async function importFile(file) {
   try {
     const result = await api("/api/books/import", { method: "POST", body: form });
     await refreshLibraryData();
+    persistMapCameraState();
     state.bookId = Number(result.id);
     state.mapStep = 0;
     state.mapViewport = null;
@@ -4757,6 +5088,7 @@ async function resolveUpdate(updateId, action) {
     });
     await refreshLibraryData();
     if (action === "apply_incremental") {
+      persistMapCameraState();
       state.bookId = Number(result.book_id);
       $("#book-select").value = String(state.bookId);
       resetMapStateForBook();
@@ -4764,6 +5096,7 @@ async function resolveUpdate(updateId, action) {
       closeDialog("#update-dialog");
       toast(`增量更新已应用；复用 ${Math.round(Number(result.reuse_ratio || 0) * 100)}% 既有分析`);
     } else if (action !== "keep_current") {
+      persistMapCameraState();
       state.bookId = Number(result.book_id);
       $("#book-select").value = String(state.bookId);
       state.mapStep = 0;
@@ -4940,6 +5273,7 @@ async function deleteCurrentBook() {
   if (!await confirmAction("删除当前书籍", `《${title}》的原文、分析结果和修改记录将被删除，建议先备份`, "删除书籍")) return;
   try {
     await api(`/api/books/${state.bookId}`, { method: "DELETE" });
+    persistMapCameraState();
     await refreshLibraryData();
     if (state.books.length) {
       state.bookId = Number(state.books[0].id);
@@ -4998,6 +5332,7 @@ async function deleteProviderKey() {
 document.addEventListener("change", (event) => {
   if (!event.target.matches("#story-scope-select")) return;
   const [kind, rawId] = event.target.value.split(":");
+  persistMapCameraState();
   state.storyScope = { kind, id: Number(rawId) };
   state.mapStep = 0;
   state.mapViewport = null;
@@ -5006,6 +5341,7 @@ document.addEventListener("change", (event) => {
 $("#book-select").addEventListener("change", async (event) => {
   clearTimeout(state.jobTimer);
   state.activeJobId = null;
+  persistMapCameraState();
   state.bookId = Number(event.target.value);
   state.controlPlane = null;
   state.controlPlaneBookId = null;

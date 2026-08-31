@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "product": "小说证据图谱",
-  "release": "2.9.7-rc.1",
-  "status": "public_candidate_deployed_pending_authenticated_browser_acceptance",
-  "source_commit": "a839350841b2655cbbf65fa6e094a9b529a33f69",
-  "active_objective": "完成登录后公网浏览器验收并保留 2.9.7-rc.1 候选版的可回滚发布证据",
+  "release": "2.9.7-rc.2",
+  "status": "release_candidate_ready_local_pending_publication",
+  "source_commit": "0c9c5e1",
+  "active_objective": "完成 2.9.7-rc.2 相机修复的安全发布、同提交部署和登录后浏览器验收",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -17,14 +17,14 @@
     "unit_tests": "passed:154;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
     "github_actions": "passed:quality-gate-run-33353805510;python-browser-container",
-    "browser_flows": "passed:13;skipped:3-local-extended-fixtures;map-camera-mode-persists-across-steps;settings-form-gap-verified",
+    "browser_flows": "passed:16;skipped:3-local-extended-fixtures",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
     "map_region_naming": "passed:no-numbered-topology-placeholder;external-label-anchor-and-connector",
     "map_region_overlap": "passed:12-open-works;0-unrelated-overlaps;0-unassigned;occupancy-union-buffer-corridor;node-label-child-containment;shapely-2.1.2",
     "map_constraint_gate": "passed:64-containment;19-proximity;5-direction;0-failed-relations;invalid-layout-falls-back-to-evidence-view",
     "map_evidence_proximity": "passed:12-open-works;19-explicit-near-relations;0-split-failures;max-distance-238.2;three-kingdoms-peach-garden-zhang-fei-estate-distance-227.7",
-    "map_camera_tracking": "passed:persistent-world-region-step-mode;next-step-keeps-selected-focus;2d-3d-shared-state",
+    "map_camera_tracking": "pending:rc.2-fresh-public-build-and-authenticated-browser-acceptance",
     "map_region_volume": "passed:closed-top-bottom-side-shells;parent-child-volume-containment;shell-section-current-layer",
     "narrative_partition": "passed:reversible-units-and-worlds;rename-boundary-move-split-merge-restore;single-library-book",
     "incremental_update": "passed:append-insert-modify-delete-rename-reorder;unchanged-segments-reused;human-edits-preserved;evidence-reanchored",
@@ -45,13 +45,13 @@
     "reader_quality_gate": "evidence-structure-conflicts-and-actionable-book-issues-only"
   },
   "publication": {
-    "github": "published:release/2.9.7-rc.1-clean;default-branch-updated",
-    "github_commit": "a839350841b2655cbbf65fa6e094a9b529a33f69",
-    "github_release": "published:v2.9.7-rc.1-prerelease",
-    "deployment": "readyz-2.9.7-rc.1;build-commit-a839350841b2655cbbf65fa6e094a9b529a33f69;image-sha256-0ed4e7292009a1dc2fe466d4dd393c6e945af5c77e02430edcee727f3d527465;database-volume-preserved",
+    "github": "pending:rc.2-safe-gate-and-actions",
+    "github_commit": "pending",
+    "github_release": "pending:v2.9.7-rc.2-prerelease",
+    "deployment": "pending:rc.2-vps-backup-and-same-commit-readyz",
     "hostname": "Authentik-protected deployment",
     "authentication": "anonymous-root-api-and-readyz-redirect-to-Authentik;tls-and-security-headers-verified",
-    "rollback": "2.9.6-release-directory-and-image-retained;backup-20260831T033116Z-pre-2.9.7-rc.1"
+    "rollback": "retain-2.9.7-rc.1-and-2.9.6;rc.2-backup-pending"
   },
-  "last_updated": "2026-08-31"
+  "last_updated": "2026-08-30"
 }

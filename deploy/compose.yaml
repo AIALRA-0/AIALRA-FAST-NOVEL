@@ -6,7 +6,7 @@ services:
       args:
         NOVEL_BUILD_COMMIT: ${NOVEL_BUILD_COMMIT:-local}
         NOVEL_BUILD_TIME: ${NOVEL_BUILD_TIME:-local}
-    image: aialra/novel-atlas:2.9.7-rc.1
+    image: aialra/novel-atlas:2.9.7-rc.2
     restart: unless-stopped
     ports:
       - "127.0.0.1:${NOVEL_ATLAS_PORT:-18765}:8080"

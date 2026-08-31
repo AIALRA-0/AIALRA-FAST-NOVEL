@@ -1,7 +1,7 @@
 <div align="center">
   <h1>小说证据图谱</h1>
   <p>把长篇小说整理成人物关系、故事编年、2D/3D 语义世界图和可检索知识库，每条正式事实都保留原文出处</p>
-  <p><strong>2.9.7-rc.1 候选版</strong> · <a href="README.en.md">English</a> · <a href="docs/CURRENT_STATE.md">当前验证状态</a> · <a href="docs/DEPLOYMENT.md">部署与回滚</a></p>
+  <p><strong>2.9.7-rc.2 候选版</strong> · <a href="README.en.md">English</a> · <a href="docs/CURRENT_STATE.md">当前验证状态</a> · <a href="docs/DEPLOYMENT.md">部署与回滚</a></p>
 </div>
 
 这是一个可本地运行的个人项目，不是已经承诺服务等级的多租户平台；项目不宣称任意小说都能达到固定准确率，普通用户只需要处理会真实影响当前书籍的问题
@@ -119,7 +119,7 @@ npx playwright test tests/e2e_ui.spec.js --reporter=line # 运行合成环境浏
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.ps1 # 核对版本与双视图合同
 ```
 
-2.9.7-rc.1 当前固定门禁结果
+2.9.7-rc.2 当前固定门禁结果
 
 - 154 项 Python 测试通过，1 项 Windows DPAPI 受保护路径测试按环境条件跳过
 - 12 部本机开放作品完成 1,868 个原文片段和超过 619 万字符的确定性导入检查，覆盖中文、英文、日文与 TXT、HTML、EPUB

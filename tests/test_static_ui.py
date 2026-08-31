@@ -116,7 +116,9 @@ def test_rapid_navigation_keeps_separate_live_positions_for_both_renderers() -> 
     assert "state.mapMarkerPoint = progress < 1 ? { x, y } : target" in script
     assert "const start = state.mapMarkerPoint3D" in script
     assert "state.mapMarkerPoint3D = point" in script
-    assert script.count("cancelAnimationFrame(state.mapAnimationFrame)") >= 4
+    assert "function cancelMapTransition()" in script
+    assert "state.mapTransitionRunId += 1" in script
+    assert script.count("cancelAnimationFrame(state.mapAnimationFrame)") >= 3
 
 
 def test_monochrome_ui_has_large_controls_and_visible_focus() -> None:
@@ -145,6 +147,13 @@ def test_v29_shared_select_progress_and_quality_workbench_contract() -> None:
     assert 'state.mapCameraMode === "step"' in script
     assert "1550 / state.mapPlaybackSpeed" in script
     assert "Math.exp(" in script
+    assert 'const MAP_CAMERA_STORAGE_KEY = "novel-atlas-map-camera-state-v2"' in script
+    assert "function scheduleMapCameraPersist()" in script
+    assert "function cancelMapTransition()" in script
+    assert "cancelTransition()" in script
+    assert "capture()" in script and "restore(snapshot)" in script
+    assert 'data-camera-mode="follow"' in script
+    assert "MAP_CAMERA_SAFE_MARGIN = 0.28" in script
     assert 'data-tab="pending"' in script
     assert 'data-tab="cost"' in script
 

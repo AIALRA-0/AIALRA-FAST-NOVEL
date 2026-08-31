@@ -28,12 +28,12 @@ def test_health_and_readiness_endpoints(tmp_path: Path) -> None:
 
     with client_for(tmp_path) as client:
         health = client.get("/healthz").json()
-        assert health == {"status": "ok", "version": "2.9.7-rc.1"}
+        assert health == {"status": "ok", "version": "2.9.7-rc.2"}
         readiness = client.get("/readyz")
         assert readiness.status_code == 200
         assert readiness.json() == {
             "status": "ready",
-            "version": "2.9.7-rc.1",
+            "version": "2.9.7-rc.2",
             "build_commit": "local",
             "build_time": "local",
             "layout_version": "semantic-atlas-v2.9.7-constraint-gate1",

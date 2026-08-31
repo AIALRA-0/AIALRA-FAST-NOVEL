@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Novel Atlas</h1>
   <p>Turn long-form fiction into a character graph, story chronology, 2D/3D semantic world map, and searchable knowledge base, while keeping an exact source passage for every accepted fact</p>
-  <p><strong>2.9.7-rc.1 release candidate</strong> · <a href="README.md">中文</a> · <a href="docs/CURRENT_STATE.md">Current verification</a> · <a href="docs/DEPLOYMENT.md">Deployment and rollback</a></p>
+  <p><strong>2.9.7-rc.2 release candidate</strong> · <a href="README.md">中文</a> · <a href="docs/CURRENT_STATE.md">Current verification</a> · <a href="docs/DEPLOYMENT.md">Deployment and rollback</a></p>
 </div>
 
 This is a runnable personal project, not a hosted multi-tenant service with a service-level commitment. It does not claim a fixed accuracy rate for arbitrary novels, and ordinary readers only see issues that affect the current book
@@ -119,7 +119,7 @@ npx playwright test tests/e2e_ui.spec.js --reporter=line # Run synthetic browser
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_current_state.ps1 # Verify version and dual-view contracts
 ```
 
-The current 2.9.7-rc.1 gate reports
+The current 2.9.7-rc.2 gate reports
 
 - 154 passing Python tests and 1 environment-dependent skip for the Windows DPAPI protected path
 - deterministic import checks for 1,868 source segments and more than 6.19 million characters across 12 open works, covering Chinese, English, Japanese, TXT, HTML, and EPUB

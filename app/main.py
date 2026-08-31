@@ -147,7 +147,7 @@ from app.seed import seed_demo
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 STATIC_DIR = ROOT / "static"
-APP_VERSION = "2.9.7-rc.1"
+APP_VERSION = "2.9.7-rc.2"
 BUILD_COMMIT = os.getenv("NOVEL_BUILD_COMMIT", "local")
 BUILD_TIME = os.getenv("NOVEL_BUILD_TIME", "local")
 DATABASE_SCHEMA_VERSION = "2.9.7"

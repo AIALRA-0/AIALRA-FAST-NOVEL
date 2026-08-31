@@ -445,11 +445,14 @@ test("2.9.2 地图控制栏、区域联动和播放速度保持一致", async ({
     const view = svg.getAttribute("viewBox").split(/\s+/).map(Number);
     const transform = svg.querySelector("#journey-avatar")?.getAttribute("transform") || "";
     const match = transform.match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)/);
-    if (!match) return Number.POSITIVE_INFINITY;
-    const horizontalOffset = Math.abs(Number(match[1]) - (view[0] + view[2] / 2)) / view[2];
-    const verticalOffset = Math.abs(Number(match[2]) - (view[1] + view[3] / 2)) / view[3];
-    return Math.max(horizontalOffset, verticalOffset);
-  })).toBeLessThan(0.25);
+    if (!match) return false;
+    const x = Number(match[1]);
+    const y = Number(match[2]);
+    const safeX = view[2] * 0.28;
+    const safeY = view[3] * 0.28;
+    return x >= view[0] + safeX && x <= view[0] + view[2] - safeX
+      && y >= view[1] + safeY && y <= view[1] + view[3] - safeY;
+  })).toBe(true);
 
   await chooseHiddenSelect(page, "#map-playback-speed", "2");
   await expect(page.locator("#map-playback-speed")).toHaveValue("2");
@@ -492,6 +495,138 @@ test("2.9.2 地图控制栏、区域联动和播放速度保持一致", async ({
   expect(errors).toEqual([]);
 });
 
+test("2.9.7 地图跟随任务、缩放记忆和二维三维相机记录隔离", async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!window.sessionStorage.getItem("camera-e2e-reset")) {
+      window.localStorage.clear();
+      window.sessionStorage.setItem("camera-e2e-reset", "1");
+    }
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await selectBook(page, "长夜十二城 · 120章大型压力演示");
+  await page.locator('.nav-item[data-view="map"]').click();
+  await expect(page.locator("#map-step-slider")).toBeVisible();
+
+  await page.locator(".map-view-menu summary").click();
+  await page.locator("#map-fit-follow").click();
+  await expect(page.locator(".map-view-menu summary")).toHaveText("视角 · 跟随任务");
+
+  const initialView = await page.locator(".map-svg").evaluate((svg) => svg.getAttribute("viewBox").split(/\s+/).map(Number));
+  await page.locator("#map-zoom-in").click();
+  await expect.poll(async () => page.locator(".map-svg").evaluate((svg) => Number(svg.getAttribute("viewBox").split(/\s+/)[2]))).toBeLessThan(initialView[2]);
+  const zoomedView = await page.locator(".map-svg").evaluate((svg) => svg.getAttribute("viewBox").split(/\s+/).map(Number));
+
+  const finalStep = Number(await page.locator("#map-step-slider").getAttribute("max"));
+  await page.locator("#map-step-slider").evaluate((slider, value) => {
+    slider.value = String(value);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  }, finalStep);
+  await expect.poll(async () => page.locator(".map-svg").evaluate((svg) => {
+    const view = svg.getAttribute("viewBox").split(/\s+/).map(Number);
+    const match = (svg.querySelector("#journey-avatar")?.getAttribute("transform") || "").match(/translate\(\s*([-\d.]+)[,\s]+([-\d.]+)\s*\)/);
+    if (!match) return false;
+    const x = Number(match[1]);
+    const y = Number(match[2]);
+    const safeX = view[2] * 0.28;
+    const safeY = view[3] * 0.28;
+    return x >= view[0] + safeX && x <= view[0] + view[2] - safeX
+      && y >= view[1] + safeY && y <= view[1] + view[3] - safeY;
+  })).toBe(true);
+  await expect.poll(async () => page.locator(".map-svg").evaluate((svg) => Number(svg.getAttribute("viewBox").split(/\s+/)[2]))).toBeCloseTo(zoomedView[2], 3);
+
+  const records = await page.evaluate(() => JSON.parse(window.localStorage.getItem("novel-atlas-map-camera-state-v2")));
+  const currentBookId = await page.locator("#book-select").inputValue();
+  const twoDKey = Object.entries(records.entries)
+    .filter(([key]) => key.startsWith(`${currentBookId}|`) && key.endsWith("|atlas|2d"))
+    .sort((left, right) => Number(left[1].updatedAt || 0) - Number(right[1].updatedAt || 0))
+    .at(-1)?.[0];
+  expect(twoDKey).toBeTruthy();
+  expect(records.entries[twoDKey].viewBox.width).toBeCloseTo(zoomedView[2], 3);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await selectBook(page, "长夜十二城 · 120章大型压力演示");
+  await page.locator('.nav-item[data-view="map"]').click();
+  await expect(page.locator("#map-step-slider")).toBeVisible();
+  await expect(page.locator(".map-view-menu summary")).toHaveText("视角 · 跟随任务");
+  const restoredView = await page.locator(".map-svg").evaluate((svg) => svg.getAttribute("viewBox").split(/\s+/).map(Number));
+  expect(restoredView[2]).toBeCloseTo(zoomedView[2], 3);
+  expect(restoredView[0]).toBeCloseTo(zoomedView[0], 3);
+
+  await page.locator('.map-mode[data-mode="3d"]').click();
+  await expect(page.locator("#map-3d canvas")).toBeVisible();
+  await page.locator("#map-zoom-in").click();
+  await page.waitForTimeout(240);
+  const after3D = await page.evaluate(() => JSON.parse(window.localStorage.getItem("novel-atlas-map-camera-state-v2")));
+  expect(Object.keys(after3D.entries).some((key) => key.endsWith("|atlas|3d"))).toBe(true);
+  await page.locator('.map-mode[data-mode="2d"]').click();
+  await expect(page.locator(".map-svg")).toBeVisible();
+  const backTo2D = await page.locator(".map-svg").evaluate((svg) => svg.getAttribute("viewBox").split(/\s+/).map(Number));
+  expect(backTo2D[2]).toBeCloseTo(zoomedView[2], 3);
+});
+
+test("2.9.7 未知地点不移动相机并保持人物标记隐藏", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.clear());
+  await page.setViewportSize({ width: 1366, height: 768 });
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.locator('.nav-item[data-view="map"]').click();
+  await expect(page.locator("#map-step-slider")).toBeVisible();
+  const bookId = await page.locator("#book-select").inputValue();
+  const overview = await page.request.get(`${baseURL}/api/books/${bookId}/overview`).then((response) => response.json());
+  const unknownIndex = overview.events.findIndex((event, index) => event.location_entity_id === null && index > 0);
+  test.skip(unknownIndex < 0, "当前回归书籍没有未知地点步骤");
+  const previousIndex = overview.events.slice(0, unknownIndex).map((event, index) => ({ event, index })).reverse().find((item) => item.event.location_entity_id !== null)?.index;
+  test.skip(previousIndex === undefined, "当前回归书籍没有未知地点前置步骤");
+  await page.locator("#map-step-slider").evaluate((slider, value) => {
+    slider.value = String(value);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  }, previousIndex);
+  await page.waitForTimeout(760);
+  const before = await page.locator(".map-svg").evaluate((svg) => svg.getAttribute("viewBox"));
+  await page.locator("#map-step-slider").evaluate((slider, value) => {
+    slider.value = String(value);
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  }, unknownIndex);
+  await expect(page.locator("#journey-avatar")).toHaveAttribute("hidden", "");
+  await page.waitForTimeout(180);
+  await expect(page.locator(".map-svg")).toHaveAttribute("viewBox", before);
+});
+
+test("2.9.7 详情关闭按钮和审核编辑区域保持间距", async ({ page }) => {
+  await page.setViewportSize({ width: 1650, height: 982 });
+  await page.goto(baseURL, { waitUntil: "networkidle" });
+  await page.locator('.nav-item[data-view="relationships"]').click();
+  await page.locator("details.fallback-list summary").click();
+  await page.locator('.fallback-list li button[data-type="claim"]').first().click();
+  await expect(page.locator("#inspector")).toHaveClass(/open/);
+  const closeBox = await page.locator("#inspector-close").evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return { width: box.width, height: box.height, radius: getComputedStyle(element).borderRadius };
+  });
+  expect(closeBox.width).toBe(44);
+  expect(closeBox.height).toBe(44);
+  expect(closeBox.radius).toBe("999px");
+  await page.locator(".relation-editor summary").click();
+  const editorStyle = await page.locator(".relation-editor").evaluate((element) => ({
+    gap: getComputedStyle(element.querySelector(".form-stack")).gap,
+    padding: getComputedStyle(element.querySelector(".form-stack")).padding,
+  }));
+  expect(editorStyle.gap).toBe("12px");
+  expect(editorStyle.padding).toBe("16px");
+  const actions = await page.locator(".record-actions").evaluate((element) => getComputedStyle(element).justifyContent);
+  expect(actions).toBe("center");
+
+  await page.locator("#inspector-close").click();
+  await page.locator('.nav-item[data-view="timeline"]').click();
+  await expect(page.locator(".narrative-memory")).toHaveCount(1);
+  await page.locator(".narrative-memory summary").click();
+  const articleGap = await page.locator(".narrative-memory-content").evaluate((element) => {
+    const items = [...element.querySelectorAll("article")].map((item) => item.getBoundingClientRect());
+    return items.length > 1 ? items[1].top - items[0].bottom : 16;
+  });
+  expect(articleGap).toBeGreaterThanOrEqual(16);
+});
+
 test("分析设置双栏表单保留清晰间距", async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
@@ -519,6 +654,7 @@ test("分析设置双栏表单保留清晰间距", async ({ page }) => {
 test("2.9.6 零问题时隐藏人工复核和专业工具", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await selectBook(page, "长夜十二城 · 120章大型压力演示");
 
   await page.locator('.nav-item[data-view="quality"]').click();
   await expect(page.locator('.quality-tab[data-tab="pending"]')).toBeVisible();
