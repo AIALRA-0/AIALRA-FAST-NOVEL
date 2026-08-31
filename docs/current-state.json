@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "product": "小说证据图谱",
+  "release": "2.9.7-rc.3",
+  "status": "local_candidate_validation",
+  "source_commit": "pending-local-commit",
+  "active_objective": "完成 2.9.7-rc.3 阅读窗口、剧情范围、供应商探测与统一加载进度的本地回归；远程发布和部署等待新鲜证据",
+  "contracts": {
+    "fact_source": "原文证据",
+    "chronology_source": "overview.story_map_steps",
+    "map_2d_source": "overview.story_map_steps",
+    "map_3d_source": "overview.story_map_steps",
+    "reading_window_source": "overview.reading_window",
+    "unknown_policy": "未知不补猜",
+    "public_data_policy": "公开仓库和未登录访问不含全文；Authentik后的私有书库允许来源与许可完整的开放作品"
+  },
+  "quality_gate": {
+    "unit_tests": "passed:161;total:162;skipped:1-windows-dpapi-protected-path-only",
+    "javascript_syntax": "passed:node-check",
+    "python_compile": "passed:compileall",
+    "browser_flows": "passed:16;total:19;skipped:3-local-extended-fixtures",
+    "reading_window": "passed:shared-from-through-ceiling;422-reversed-window;legacy-through-compatible",
+    "narrative_partition": "passed:generic-chapters-stay-progress-boundaries;explicit-units-only;demo-four-units",
+    "actionable_open_threads": "passed:reader-only-actionable-with-evidence-and-route",
+    "provider_probe": "passed:unconfigured-connected-model-missing-auth-timeout-service-error;secret-free;local-live:deepseek-connected-model-available;moonshot-auth-failed",
+    "loading_progress": "passed:real-sequential-stages;failure-keeps-old-content;retry-entry",
+    "library_tree": "passed:folder-depth-and-book-indent",
+    "map_geometry": "passed:existing-constraint-gate-and-2d-3d-story-step-contract",
+    "real_corpus_import": "passed:12-open-works-local-only;full-text-not-public",
+    "reader_quality_gate": "evidence-structure-conflicts-and-actionable-book-issues-only",
+    "internal_regression": "maintenance-only:not-reader-visible:not-reader-blocking",
+    "accuracy_claim": "not-claimed;fixed-sample-evidence-only;no-general-95-percent-claim"
+  },
+  "publication": {
+    "github": "pending-fresh-safe-gate",
+    "github_commit": "pending",
+    "github_release": "pending:v2.9.7-rc.3",
+    "github_actions": "pending",
+    "deployment": "pending:same-commit-image-and-data-volume-backup",
+    "hostname": "not-recorded-in-public-state",
+    "authentication": "pending:Authentik-session-browser-acceptance",
+    "readyz_fingerprint": "pending",
+    "rollback": "retain-historical-v2.9.7-rc.2.1-until-rc.3-gate-completes"
+  },
+  "last_updated": "2026-08-31"
+}
