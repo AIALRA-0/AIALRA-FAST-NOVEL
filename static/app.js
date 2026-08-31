@@ -1227,6 +1227,13 @@ function renderView() {
   if (state.view !== "map") stopMapPlayback();
   if (state.view === "map") closeInspector();
   document.body.dataset.view = state.view;
+  // 书籍切换和首次加载期间，派生数据会短暂为空；不要让导航点击在
+  // 这一小段窗口里调用任何读取 state.overview.book 的渲染器；
+  if (!state.overview || !state.overview.book) {
+    renderLoadingProgress("读取当前书籍", 0, 1);
+    $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === state.view));
+    return;
+  }
   renderHeader();
   $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === state.view));
   const renderers = {

@@ -217,3 +217,9 @@ def test_v29_systems_and_story_context_are_reader_visible_without_a_second_map_s
     assert "/story-context/" in script
     assert "当前剧情需要知道" in script
     assert script.count("function storyMapSteps()") == 1
+
+
+def test_navigation_during_book_switch_keeps_loading_state_instead_of_reading_null_overview() -> None:
+    script = _text("static/app.js")
+    assert "if (!state.overview || !state.overview.book)" in script
+    assert 'renderLoadingProgress("读取当前书籍", 0, 1)' in script
