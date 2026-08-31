@@ -75,3 +75,14 @@
 - GitHub 干净候选提交为 `6c1a99d`；Actions 运行 `33288986817` 已通过；预发布标签为 `v2.9.6-rc.1`
 - 未登录访问根页面、书库接口和就绪接口继续跳转 Authentik；TLS 与安全响应头正常
 - 本轮公开 README 增加六张实际运行页面截图；截图使用内置合成数据，不含用户小说、账号、地址或密钥
+
+## 2.9.7 候选版部署记录
+
+- 当前发布目录为 `/srv/aialra/apps/novel-atlas/releases/2.9.7-rc.1-a839350`
+- 容器镜像为 `aialra/novel-atlas:2.9.7-rc.1`；镜像摘要为 `sha256:0ed4e7292009a1dc2fe466d4dd393c6e945af5c77e02430edcee727f3d527465`
+- GitHub 干净候选提交为 `a839350841b2655cbbf65fa6e094a9b529a33f69`；Actions 运行 `33353805510` 已通过；预发布标签为 `v2.9.7-rc.1`
+- 切换前在容器停止状态下备份原数据卷；备份目录为 `/srv/aialra/apps/novel-atlas/backups/20260831T033116Z-pre-2.9.7-rc.1`
+- 服务器内部 `/readyz` 返回 `2.9.7-rc.1`；`build_commit` 与候选提交一致；`layout_version` 为 `semantic-atlas-v2.9.7-constraint-gate1`；`database_schema_version` 为 `2.9.7`；容器健康状态为 `healthy`
+- 原数据卷继续挂载到 `/data`；升级只重建确定性地图派生结果，不调用模型，不覆盖正式事实、原文或人工编辑
+- `2.9.6-rc.1` 发布目录和镜像继续保留，可在登录后验收失败时回滚；备份压缩包校验为 `50c536042a17d92c68e245985799a033e560aad7aff9804272b30d35c4d8668b`
+- 未登录访问根页面和 `/readyz` 继续跳转 Authentik；TLS、安全响应头和 Nginx 配置检查通过；登录后公网浏览器验收等待现有用户会话完成

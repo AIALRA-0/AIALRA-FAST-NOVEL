@@ -2,9 +2,9 @@
   "schema_version": 1,
   "product": "小说证据图谱",
   "release": "2.9.7-rc.1",
-  "status": "local_systemic_release_candidate_in_validation",
-  "source_commit": "df2eaf1504dbdd7c125e81034434b7208f5a7d85",
-  "active_objective": "完成地图事实约束、共享界面规则、构建指纹、全量测试与同一提交的 GitHub 和 VPS 发布",
+  "status": "public_candidate_deployed_pending_authenticated_browser_acceptance",
+  "source_commit": "a839350841b2655cbbf65fa6e094a9b529a33f69",
+  "active_objective": "完成登录后公网浏览器验收并保留 2.9.7-rc.1 候选版的可回滚发布证据",
   "contracts": {
     "fact_source": "原文证据",
     "chronology_source": "overview.story_map_steps",
@@ -16,7 +16,7 @@
   "quality_gate": {
     "unit_tests": "passed:154;skipped:1-windows-dpapi-protected-path-only",
     "javascript_syntax": "passed",
-    "github_actions": "passed:quality-gate-run-33288986817;python-browser-container",
+    "github_actions": "passed:quality-gate-run-33353805510;python-browser-container",
     "browser_flows": "passed:13;skipped:3-local-extended-fixtures;map-camera-mode-persists-across-steps;settings-form-gap-verified",
     "knowledge_book_switch_isolation": "passed:delayed-api-regression-and-vps-latency",
     "map_region_step_linkage": "passed:2d-current-region-and-3d-emphasis-share-StoryMapStep",
@@ -45,13 +45,13 @@
     "reader_quality_gate": "evidence-structure-conflicts-and-actionable-book-issues-only"
   },
   "publication": {
-    "github": "published:release/2.9.6-rc.1-clean;default-branch-updated",
-    "github_commit": "6c1a99d10e57d9006c67f112ad01f66510599a08",
-    "github_release": "published:v2.9.6-rc.1-prerelease",
-    "deployment": "readyz-2.9.6-rc.1;image-sha256-7467882f332a;database-volume-preserved",
+    "github": "published:release/2.9.7-rc.1-clean;default-branch-updated",
+    "github_commit": "a839350841b2655cbbf65fa6e094a9b529a33f69",
+    "github_release": "published:v2.9.7-rc.1-prerelease",
+    "deployment": "readyz-2.9.7-rc.1;build-commit-a839350841b2655cbbf65fa6e094a9b529a33f69;image-sha256-0ed4e7292009a1dc2fe466d4dd393c6e945af5c77e02430edcee727f3d527465;database-volume-preserved",
     "hostname": "Authentik-protected deployment",
     "authentication": "anonymous-root-api-and-readyz-redirect-to-Authentik;tls-and-security-headers-verified",
-    "rollback": "2.9.5-release-directory-and-image-retained;backup-20260830T025911Z-pre-2.9.6-rc.1"
+    "rollback": "2.9.6-release-directory-and-image-retained;backup-20260831T033116Z-pre-2.9.7-rc.1"
   },
-  "last_updated": "2026-08-30"
+  "last_updated": "2026-08-31"
 }
