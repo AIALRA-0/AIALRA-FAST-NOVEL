@@ -3,7 +3,7 @@
   "product": "小说证据图谱",
   "release": "2.9.7-rc.2",
   "status": "release_candidate_ready_local_pending_publication",
-  "source_commit": "002e96b",
+  "source_commit": "de1008b",
   "active_objective": "完成 2.9.7-rc.2 相机修复的安全发布、同提交部署和登录后浏览器验收",
   "contracts": {
     "fact_source": "原文证据",
