@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="带原文证据的小说人物、时间、地点与世界知识系统">
+  <title>小说证据图谱</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23111111'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-size='34' fill='white'%3E%E5%8F%99%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css?v=2.9.7-rc.1">
+</head>
+<body>
+  <!-- 跳转链接帮助键盘用户直接进入主要内容； -->
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="书库与视图导航">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">叙</div>
+        <div>
+          <strong>小说证据图谱</strong>
+          <span>Novel Atlas · 2.9.7-rc.1 候选版</span>
+        </div>
+      </div>
+
+      <section class="book-picker" aria-labelledby="library-title">
+        <div class="section-label" id="library-title">本机书库</div>
+        <select id="book-select" aria-label="选择一本书" hidden></select>
+        <div id="sidebar-library-tree" class="sidebar-library-tree" aria-label="文件夹与书籍"></div>
+        <div class="library-quick-actions">
+          <button class="button button-secondary" id="library-button" type="button">管理书库</button>
+          <button class="button button-secondary" id="upload-button" type="button"><span aria-hidden="true">＋</span> 导入小说</button>
+        </div>
+        <input id="file-input" type="file" accept=".txt,.md,.markdown,.epub,.html,.htm,.docx,.pdf" hidden>
+        <div class="sidebar-search-row">
+          <input id="global-search" class="sidebar-search" type="search" placeholder="搜索人物、事件或原文" aria-label="搜索当前小说">
+          <button id="global-search-button" class="sidebar-search-button" type="button" aria-label="开始搜索">搜索</button>
+        </div>
+      </section>
+
+      <nav class="view-nav" aria-label="知识视图">
+        <button class="nav-item active" data-view="relationships" type="button"><span aria-hidden="true">◎</span>人物关系</button>
+        <button class="nav-item" data-view="timeline" type="button"><span aria-hidden="true">│</span>剧情编年</button>
+        <button class="nav-item" data-view="map" type="button"><span aria-hidden="true">⌁</span>逻辑地图</button>
+        <button class="nav-item" data-view="world" type="button"><span aria-hidden="true">◇</span>世界信息</button>
+        <button class="nav-item" data-view="database" type="button"><span aria-hidden="true">▦</span>条目数据库</button>
+        <button class="nav-item" id="systems-nav" data-view="systems" type="button" hidden><span aria-hidden="true">階</span>体系图谱</button>
+        <button class="nav-item" data-view="quality" type="button"><span aria-hidden="true">✓</span>质量检查</button>
+        <button class="nav-item" data-view="collaboration" type="button"><span aria-hidden="true">≋</span>分析设置与记录</button>
+      </nav>
+
+      <section class="progress-control" aria-labelledby="progress-title">
+        <div class="section-label" id="progress-title">防剧透进度</div>
+        <div class="progress-copy"><strong id="progress-chapter">—</strong><span id="progress-count" class="progress-count" tabindex="0" role="button" title="双击或按 Enter 输入进度" aria-label="编辑防剧透进度">—</span></div>
+        <input id="progress-slider" type="range" min="0" max="0" value="0" aria-label="只显示读到当前章节之前的信息">
+        <p>人物、关系、地点和条目会使用同一个阅读边界</p>
+      </section>
+
+      <section class="data-actions" aria-labelledby="data-title">
+        <div class="section-label" id="data-title">数据管理</div>
+        <div class="compact-actions">
+          <button id="export-button" class="button button-quiet" type="button">导出本书</button>
+          <button id="backup-button" class="button button-quiet" type="button">备份全部</button>
+          <button id="update-book-button" class="button button-quiet" type="button">增量更新</button>
+          <button id="delete-button" class="button button-danger" type="button">删除本书</button>
+        </div>
+      </section>
+
+      <div class="privacy-note">
+        <span class="status-dot" aria-hidden="true"></span>
+        <div><strong>本地数据库</strong><span>密钥由 Windows 账户加密</span></div>
+      </div>
+    </aside>
+
+    <main id="main-content" class="main-content" tabindex="-1">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow" id="view-eyebrow">人物关系</div>
+          <h1 id="book-title">正在读取书库…</h1>
+          <p id="book-subtitle">所有结论都应能回到原文证据</p>
+        </div>
+        <div class="analysis-controls">
+          <select id="provider-select" aria-label="选择分析模型"></select>
+          <button class="button button-quiet" id="key-settings-button" type="button">模型密钥</button>
+          <button class="button button-primary" id="analyze-button" type="button">分析整本书</button>
+        </div>
+      </header>
+
+      <section id="job-panel" class="job-panel" hidden aria-live="polite"></section>
+
+      <section class="metric-grid" aria-label="当前结构统计">
+        <article class="metric-card"><span>可见人物与地点</span><strong id="metric-entities">0</strong><small id="metric-persons">0 位人物</small></article>
+        <article class="metric-card"><span>编年事件</span><strong id="metric-events">0</strong><small id="metric-flashbacks">0 条非线性叙事</small></article>
+        <article class="metric-card"><span>证据覆盖</span><strong id="metric-evidence">0%</strong><small>可逐字回到原文</small></article>
+        <article class="metric-card" id="metric-review-card" hidden></article>
+      </section>
+
+      <section id="view-panel" class="view-panel" aria-live="polite"></section>
+    </main>
+
+    <!-- 宽屏使用固定第三栏展示证据，主视图不会再被遮罩或模糊； -->
+    <aside id="inspector" class="inspector" aria-hidden="true" aria-labelledby="inspector-title" inert>
+      <div class="inspector-head">
+        <div><span class="eyebrow">证据与详情</span><h2 id="inspector-title">—</h2></div>
+        <button class="icon-button" id="inspector-close" type="button" aria-label="关闭详情">×</button>
+      </div>
+      <div id="inspector-body" class="inspector-body"></div>
+    </aside>
+  </div>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <!-- 原文对话框负责显示证据所在片段和稳定锚点； -->
+  <dialog id="source-dialog" class="source-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">原文片段</span><h2 id="source-title">—</h2></div><button class="icon-button" id="source-close" type="button" aria-label="关闭原文">×</button></div>
+    <div class="source-meta" id="source-meta"></div>
+    <article id="source-text" class="source-text"></article>
+  </dialog>
+
+  <!-- 全书搜索对话框同时显示结构知识和原文命中位置； -->
+  <dialog id="search-dialog" class="source-dialog search-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">全书搜索</span><h2 id="search-title">搜索结果</h2></div><button class="icon-button" id="search-close" type="button" aria-label="关闭搜索">×</button></div>
+    <div id="search-results" class="search-results"></div>
+  </dialog>
+
+  <!-- 模型密钥在提交后由 Windows 当前账户加密，页面不会再次读取明文； -->
+  <dialog id="key-dialog" class="source-dialog key-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">本机模型设置</span><h2>配置开放平台密钥</h2></div><button class="icon-button" id="key-close" type="button" aria-label="关闭模型设置">×</button></div>
+    <form class="key-form" onsubmit="return false;">
+      <label for="key-provider">模型平台</label>
+      <select id="key-provider"><option value="deepseek">DeepSeek 开放平台</option><option value="moonshot">Moonshot 开放平台</option></select>
+      <label for="provider-key">密钥</label>
+      <input id="provider-key" type="password" autocomplete="off" placeholder="粘贴开放平台 API 密钥">
+      <p>Kimi Code 订阅密钥只用于交互式编码，不能用于小说批处理；保存后的密钥由 Windows 当前账户加密</p>
+      <div class="review-actions"><button class="button button-primary" id="key-save" type="button">加密保存</button><button class="button button-danger" id="key-delete" type="button">删除已存密钥</button></div>
+    </form>
+  </dialog>
+
+  <!-- 分析任务根据真实消耗自动适配，紧急保护线只处理失控循环和服务异常； -->
+  <dialog id="analysis-dialog" class="source-dialog analysis-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">自动用量策略</span><h2>确认整本书分析</h2></div><button class="icon-button" id="analysis-close" type="button" aria-label="关闭分析设置">×</button></div>
+    <div class="analysis-form">
+      <label for="analysis-budget">初始金额参考，美元</label>
+      <input id="analysis-budget" type="number" min="0" max="1000" step="0.01" value="0.50">
+      <label for="analysis-review-mode">全书整理方式</label>
+      <select id="analysis-review-mode"><option value="local">本地整理，不增加模型调用</option><option value="full">模型全书复审，费用更高</option></select>
+      <div id="analysis-estimate" class="analysis-estimate" aria-live="polite">正在计算保守预估…</div>
+      <p>系统会根据已完成章节的真实用量自动扩展任务范围；达到全局紧急保护线、服务异常或质量熔断时才暂停，已完成结果始终保留</p>
+      <div class="review-actions"><button class="button button-quiet" id="analysis-reestimate" type="button">重新估算</button><button class="button button-primary" id="analysis-start" type="button">启动自动分析</button></div>
+    </div>
+  </dialog>
+
+  <!-- 增量更新先比较旧章节，安全追加自动完成，变化内容进入冲突清单； -->
+  <dialog id="update-dialog" class="source-dialog update-dialog">
+    <div class="dialog-head"><div><span class="eyebrow">保留旧分析</span><h2>增量更新当前书籍</h2></div><button class="icon-button" id="update-close" type="button" aria-label="关闭增量更新">×</button></div>
+    <div class="update-form">
+      <label for="book-update-file">选择新版全文或新增章节文件</label>
+      <input id="book-update-file" type="file" accept=".txt,.md,.markdown,.epub,.html,.htm,.docx,.pdf">
+      <label for="book-update-mode">文件内容</label>
+      <select id="book-update-mode"><option value="auto">自动判断完整新版</option><option value="append">文件只包含新增章节</option><option value="full">文件是完整新版</option></select>
+      <button id="preview-update-button" class="button button-primary" type="button">比较并更新</button>
+      <div id="update-result" class="update-result" aria-live="polite"></div>
+      <div id="update-history" class="update-history"></div>
+    </div>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="source-dialog confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <div class="dialog-head"><div><span class="eyebrow">请确认操作</span><h2 id="confirm-title">确认操作</h2></div><button class="icon-button" id="confirm-close" type="button" aria-label="关闭确认窗口">×</button></div>
+    <p id="confirm-message" class="confirm-message"></p>
+    <div class="dialog-actions"><button id="confirm-cancel" class="button button-quiet" type="button">取消</button><button id="confirm-accept" class="button button-danger" type="button">确认</button></div>
+  </dialog>
+
+  <dialog id="form-dialog" class="source-dialog form-dialog" aria-labelledby="form-dialog-title">
+    <div class="dialog-head"><div><span class="eyebrow">人工核对</span><h2 id="form-dialog-title">补充信息</h2><p id="form-dialog-description"></p></div><button class="icon-button" id="form-dialog-close" type="button" aria-label="关闭填写窗口">×</button></div>
+    <form id="form-dialog-fields" class="form-stack" novalidate></form>
+    <div class="dialog-actions"><button id="form-dialog-cancel" class="button button-quiet" type="button">取消</button><button id="form-dialog-submit" class="button button-primary" type="button">保存</button></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/vendor/3d-force-graph-1.80.0.min.js" defer></script>
+  <script src="/static/vendor/cytoscape-3.33.1.min.js" defer></script>
+  <script src="/static/vendor/layout-base-2.0.1.js" defer></script>
+  <script src="/static/vendor/cose-base-2.2.0.js" defer></script>
+  <script src="/static/vendor/cytoscape-fcose-2.2.0.js" defer></script>
+  <script src="/static/app.js?v=2.9.7-rc.1" defer></script>
+</body>
+</html>
